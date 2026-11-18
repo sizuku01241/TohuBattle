@@ -1,0 +1,17 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "Tohu Battle Royale Resources",
+    "description": "TBR-001 resource pack",
+    "uuid": "c0f35e6a-0ef6-4c69-b5a2-52cc2f8d7b21",
+    "version": [1, 0, 0],
+    "min_engine_version": [1, 21, 0]
+  },
+  "modules": [
+    {
+      "type": "resources",
+      "uuid": "b6f3e2d8-0a2f-4f1a-8c9a-8dc8c4d6d32e",
+      "version": [1, 0, 0]
+    }
+  ]
+}

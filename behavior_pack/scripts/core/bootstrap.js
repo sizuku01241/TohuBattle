@@ -1,0 +1,46 @@
+import { EventBus } from "./EventBus.js";
+import { ErrorHandler } from "./ErrorHandler.js";
+import { ConfigManager } from "../config/ConfigManager.js";
+import { PlayerManager } from "../player/PlayerManager.js";
+import { TeamManager } from "../team/TeamManager.js";
+import { MatchManager } from "../match/MatchManager.js";
+import { CombatManager } from "../combat/CombatManager.js";
+import { MapManager } from "../map/MapManager.js";
+import { ZoneManager } from "../zone/ZoneManager.js";
+import { ItemManager } from "../item/ItemManager.js";
+import { LogManager } from "../log/LogManager.js";
+import { LogStorage } from "../storage/LogStorage.js";
+import { LogExporter } from "../log/LogExporter.js";
+import { AdminManager } from "../admin/AdminManager.js";
+import { UIManager } from "../ui/UIManager.js";
+import { world } from "@minecraft/server";
+import { MinecraftStorageAdapter } from "../platform/MinecraftStorageAdapter.js";
+import { STAGE_CONFIG } from "../config/stageConfig.js";
+import { PresetManager } from "../preset/PresetManager.js";
+import { PresetStorage } from "../storage/PresetStorage.js";
+import { InventoryTransferService } from "../inventory/InventoryTransferService.js";
+import { MinecraftInventoryAdapter } from "../platform/MinecraftInventoryAdapter.js";
+import { MinecraftLocatorAdapter } from "../platform/MinecraftLocatorAdapter.js";
+
+export function createApplication({ scheduler = null, notifier = () => {}, logger = console } = {}) {
+  const errorHandler = new ErrorHandler({ logger });
+  const eventBus = new EventBus({ onError: (error, event) => errorHandler.handle(error, { scope: `event:${event}` }) });
+  const storageAdapter = new MinecraftStorageAdapter({ world });
+  const configManager = new ConfigManager({ eventBus, storage: storageAdapter });
+  const playerManager = new PlayerManager({ eventBus });
+  const teamManager = new TeamManager({ eventBus });
+  const mapManager = new MapManager({ world });
+  mapManager.loadMap(STAGE_CONFIG.map);
+  const zoneManager = new ZoneManager({ eventBus, mapManager });
+  const itemManager = new ItemManager({ mapManager, storage: storageAdapter });
+  const inventoryTransferService = new InventoryTransferService({ inventoryAdapter: new MinecraftInventoryAdapter() });
+  const locatorAdapter = new MinecraftLocatorAdapter();
+  const combatManager = new CombatManager({ eventBus, playerManager, teamManager, configManager });
+  const matchManager = new MatchManager({ eventBus, configManager, playerManager, teamManager, scheduler, notifier, storage: storageAdapter });
+  const logManager = new LogManager({ storage: new LogStorage({ adapter: storageAdapter }), exporter: new LogExporter({ output: logger }) });
+  const presetStorage = new PresetStorage({ adapter: storageAdapter });
+  const presetManager = new PresetManager({ configManager, storage: presetStorage });
+  const adminManager = new AdminManager({ matchManager, configManager, teamManager, logManager });
+  const uiManager = new UIManager();
+  return Object.freeze({ errorHandler, eventBus, configManager, presetManager, presetStorage, playerManager, teamManager, mapManager, zoneManager, itemManager, inventoryTransferService, locatorAdapter, combatManager, matchManager, logManager, adminManager, uiManager });
+}

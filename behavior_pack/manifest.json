@@ -1,0 +1,17 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "Tohu Battle Royale",
+    "description": "TBR-001 behavior pack",
+    "uuid": "6d91d2b6-2ca1-4c67-a5ae-9e25e9a4b9fd",
+    "version": [1, 0, 0],
+    "min_engine_version": [1, 21, 0]
+  },
+  "modules": [
+    { "type": "script", "language": "javascript", "uuid": "b1b57c1d-9625-4b6b-8b5d-4e8d0af6ca8d", "version": [1, 0, 0], "entry": "scripts/main.js" }
+  ],
+  "dependencies": [
+    { "module_name": "@minecraft/server", "version": "2.12.0-beta" },
+    { "uuid": "c0f35e6a-0ef6-4c69-b5a2-52cc2f8d7b21", "version": [1, 0, 0] }
+  ]
+}
