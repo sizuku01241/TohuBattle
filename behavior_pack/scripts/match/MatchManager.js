@@ -2,15 +2,16 @@ import { ERROR_CODES, GAME_MODES, MATCH_STATES, fail, ok } from "../core/Constan
 import { EVENTS } from "../core/Events.js";
 
 export class MatchManager {
-  constructor({ eventBus, configManager, playerManager, teamManager, scheduler = null, notifier = () => {}, storage = null } = {}) {
+  constructor({ eventBus, configManager, playerManager, teamManager, scheduler = null, notifier = () => {}, storage = null, mapScanner = null } = {}) {
     this.eventBus = eventBus; this.configManager = configManager; this.playerManager = playerManager; this.teamManager = teamManager;
-    this.scheduler = scheduler; this.notifier = notifier; this.storage = storage; this.state = MATCH_STATES.LOBBY; this.countdownTask = null; this.countdownRemaining = 0; this.startedAt = null; this.interruptedState = this.storage?.get?.("tbr:match_state") ?? null;
+    this.scheduler = scheduler; this.notifier = notifier; this.storage = storage; this.mapScanner = mapScanner; this.state = MATCH_STATES.LOBBY; this.countdownTask = null; this.victoryTask = null; this.countdownRemaining = 0; this.startedAt = null; this.interruptedState = this.storage?.get?.("tbr:match_state") ?? null;
     if (this.interruptedState?.state === MATCH_STATES.LOBBY) this.interruptedState = null;
   }
   persistState() { this.storage?.set?.("tbr:match_state", { state: this.state, matchId: this.matchId ?? null, startedAt: this.startedAt ?? null }); }
   consumeInterruptedState() { const result = this.interruptedState; this.interruptedState = null; this.storage?.set?.("tbr:match_state", { state: MATCH_STATES.LOBBY }); return result; }
   getState() { return this.state; }
   validateStart() {
+    if (this.mapScanner && !this.mapScanner.isReady()) return fail("MAP_SCAN_INCOMPLETE", "map scan is not complete");
     const config = this.configManager.getConfig(); const players = this.playerManager.getStatus().filter(p => p.state === "WAITING");
     if (players.length < config.minPlayers || players.length > config.maxPlayers) return fail(ERROR_CODES.INVALID_ARGUMENT, `players must be ${config.minPlayers}-${config.maxPlayers}`);
     if (config.mode === GAME_MODES.TEAM) {
@@ -51,23 +52,26 @@ export class MatchManager {
   }
   checkVictory() {
     if (this.state !== MATCH_STATES.IN_PROGRESS) return ok({ winnerType: null, winnerId: null });
+    if (this.victoryTask !== null) return ok({ winnerType: null, winnerId: null, pending: true });
     const alive = this.playerManager.getAlivePlayers();
     const config = this.configManager.getConfig();
     if (config.mode === GAME_MODES.TEAM) {
       const aliveTeams = new Set(alive.map(player => this.teamManager.getTeamId(player.id)).filter(Boolean));
       if (aliveTeams.size > 1) return ok({ winnerType: null, winnerId: null });
-      if (aliveTeams.size === 1) return this.endMatch({ winnerType: "team", winnerId: [...aliveTeams][0], reason: "last_team" });
-      return this.endMatch({ winnerType: null, winnerId: null, reason: "all_eliminated" });
+      return this.deferVictory(aliveTeams.size === 1 ? { winnerType: "team", winnerId: [...aliveTeams][0], reason: "last_team" } : { winnerType: null, winnerId: null, reason: "all_eliminated" });
     }
     if (alive.length > 1) return ok({ winnerType: null, winnerId: null });
-    if (alive.length === 1) return this.endMatch({ winnerType: "player", winnerId: alive[0].id, reason: "last_player" });
-    return this.endMatch({ winnerType: null, winnerId: null, reason: "all_eliminated" });
+    if (alive.length <= 1) return this.deferVictory(alive.length === 1 ? { winnerType: "player", winnerId: alive[0].id, reason: "last_player" } : { winnerType: null, winnerId: null, reason: "all_eliminated" });
   }
+  deferVictory(result) { if (!this.scheduler?.runTimeout) return this.endMatch(result); this.victoryTask = this.scheduler.runTimeout(() => { this.victoryTask = null; if (this.state === MATCH_STATES.IN_PROGRESS) this.endMatch(result); }, 60); return ok({ ...result, pending: true }); }
   endMatch({ winnerType = null, winnerId = null, reason = "admin_stop" } = {}) {
     if (this.state === MATCH_STATES.ENDING || this.state === MATCH_STATES.LOBBY) return fail(ERROR_CODES.MATCH_NOT_RUNNING, "match is not active");
+    if (this.victoryTask !== null) { this.scheduler?.clearRun?.(this.victoryTask); this.victoryTask = null; }
     this.state = MATCH_STATES.ENDING; const duration = this.startedAt ? Math.floor((Date.now() - this.startedAt) / 1000) : 0;
     this.eventBus?.emit(EVENTS.MATCH_ENDED, { matchId: this.matchId, winnerType, winnerId, reason, duration }); this.notifier("GAME OVER");
     this.teamManager.unlockTeams(); this.state = MATCH_STATES.LOBBY; this.persistState(); return ok({ matchId: this.matchId, winnerType, winnerId, reason, duration });
   }
   stopByAdmin() { return this.endMatch({ reason: "admin_stop" }); }
+  eliminateByAdmin(id, reason = "admin") { if (this.state !== MATCH_STATES.IN_PROGRESS) return fail(ERROR_CODES.MATCH_NOT_RUNNING, "match is not active"); const result = this.playerManager.eliminatePlayer(id, { cause: reason, adminElimination: true }); if (result.ok) this.checkVictory(); return result; }
+  reviveByAdmin(id) { if (this.state !== MATCH_STATES.IN_PROGRESS) return fail(ERROR_CODES.MATCH_NOT_RUNNING, "match is not active"); const result = this.playerManager.revivePlayer(id, { adminRevival: true }); if (!result.ok) return result; const entity = this.playerManager.getEntity(id); try { entity?.setGameMode?.("adventure"); entity?.teleport?.(entity.location); } catch (_) {} return result; }
 }

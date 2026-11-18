@@ -14,9 +14,10 @@ export class ConfigManager {
   getConfigValue(key) { return this.config[key]; }
   validateConfig(candidate) {
     if (!candidate || !["solo", "team"].includes(candidate.mode)) return fail(ERROR_CODES.CONFIG_VALIDATION_FAILED, "mode must be solo or team");
-    if (candidate.teamCount !== null && (!Number.isInteger(candidate.teamCount) || candidate.teamCount < 2)) return fail(ERROR_CODES.CONFIG_VALIDATION_FAILED, "teamCount must be at least 2 or null");
+    if (candidate.teamCount !== null && (!Number.isInteger(candidate.teamCount) || candidate.teamCount < 2 || candidate.teamCount > 16)) return fail(ERROR_CODES.CONFIG_VALIDATION_FAILED, "teamCount must be 2-16 or null");
     // The sample world keeps Solo at one player for local demonstrations.
     // Team mode switches minPlayers back to the approved production minimum.
+    if (candidate.mode === "team" && candidate.minPlayers < 4) return fail(ERROR_CODES.CONFIG_VALIDATION_FAILED, "team mode requires at least 4 players");
     if (candidate.minPlayers < 1 || candidate.maxPlayers > 32 || candidate.minPlayers > candidate.maxPlayers) return fail(ERROR_CODES.CONFIG_VALIDATION_FAILED, "player limits are invalid");
     return ok();
   }

@@ -8,7 +8,9 @@ export const ERROR_CODES = Object.freeze({
 });
 export const DEFAULT_CONFIG = Object.freeze({
   mode: GAME_MODES.SOLO, teamCount: null, mapName: "default", countdownSeconds: 10,
-  friendlyFire: false, minPlayers: 1, maxPlayers: 32
+  friendlyFire: false, minPlayers: 1, maxPlayers: 32,
+  zone: { warningSeconds: 150, shrinkSeconds: 60, minimumRadius: 6, damageAmount: 1 },
+  assistWindowSeconds: 10, assistDamage: 5
 });
 
 export const ok = (data = {}) => ({ ok: true, data });

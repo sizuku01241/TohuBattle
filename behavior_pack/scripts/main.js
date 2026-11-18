@@ -1,4 +1,4 @@
-import { system, world, ItemStack, DisplaySlotId, ObjectiveSortOrder, CommandPermissionLevel, CustomCommandParamType, CustomCommandStatus } from "@minecraft/server";
+import { system, world, ItemStack, EquipmentSlot, DisplaySlotId, ObjectiveSortOrder, CommandPermissionLevel, CustomCommandParamType, CustomCommandStatus } from "@minecraft/server";
 import { createApplication } from "./core/bootstrap.js";
 import { STAGE_CONFIG } from "./config/stageConfig.js";
 import { EVENTS } from "./core/Events.js";
@@ -16,6 +16,7 @@ const applyConfig = changes => {
   return { status: result.ok ? CustomCommandStatus.Success : CustomCommandStatus.Failure, message: result.ok ? "TBR: 設定を変更しました" : `TBR: ${result.error.message}` };
 };
 const configMessage = () => `設定: mode=${app.configManager.getConfigValue("mode")}, teamCount=${app.configManager.getConfigValue("teamCount") ?? "なし"}, friendlyFire=${app.configManager.getConfigValue("friendlyFire") ? "on" : "off"}, countdown=${app.configManager.getConfigValue("countdownSeconds")}秒, map=${app.configManager.getConfigValue("mapName")}`;
+const resolvePlayerId = value => app.playerManager.getStatus().find(p => p.id === String(value) || p.name === String(value))?.id ?? String(value);
 const playerStateLabel = state => ({ WAITING: "待機", ALIVE: "生存", ELIMINATED: "脱落", DISCONNECTED: "切断", SPECTATOR: "観戦" }[state] ?? state);
 const titleStyle = Object.freeze({
   start: "§r§aGAME START",
@@ -43,6 +44,16 @@ system.beforeEvents.startup.subscribe(({ customCommandRegistry }) => {
       if (!result.ok) world.sendMessage(`TBR: 試合停止失敗 - ${result.error.message}`);
     });
     return { status: CustomCommandStatus.Success, message: "TBR: 試合停止を要求しました" };
+  });
+  customCommandRegistry.registerCommand({ name: "tbr:eliminate", description: "プレイヤーを強制脱落させる", permissionLevel: CommandPermissionLevel.GameDirectors, cheatsRequired: false, mandatoryParameters: [{ type: CustomCommandParamType.String, name: "player" }], optionalParameters: [{ type: CustomCommandParamType.String, name: "reason" }] }, (_origin, playerId, reason) => {
+    const targetId = resolvePlayerId(playerId); const result = app.matchManager.eliminateByAdmin(targetId, String(reason ?? "admin"));
+    if (result.ok) app.logManager.record("ADMIN_COMMAND", { command: "eliminate", playerId: targetId, reason: String(reason ?? "admin") });
+    return { status: result.ok ? CustomCommandStatus.Success : CustomCommandStatus.Failure, message: result.ok ? "TBR: プレイヤーを強制脱落させました" : `TBR: ${result.error.message}` };
+  });
+  customCommandRegistry.registerCommand({ name: "tbr:revive", description: "脱落プレイヤーを復活させる", permissionLevel: CommandPermissionLevel.GameDirectors, cheatsRequired: false, mandatoryParameters: [{ type: CustomCommandParamType.String, name: "player" }] }, (_origin, playerId) => {
+    const targetId = resolvePlayerId(playerId); const result = app.matchManager.reviveByAdmin(targetId);
+    if (result.ok) app.logManager.record("ADMIN_COMMAND", { command: "revive", playerId: targetId });
+    return { status: result.ok ? CustomCommandStatus.Success : CustomCommandStatus.Failure, message: result.ok ? "TBR: プレイヤーを復活させました" : `TBR: ${result.error.message}` };
   });
   registerCommand(customCommandRegistry, "tbr:status", "試合状態を表示する", () => ({
     status: CustomCommandStatus.Success,
@@ -101,9 +112,9 @@ system.beforeEvents.startup.subscribe(({ customCommandRegistry }) => {
     if (rawValue === undefined) return { status: CustomCommandStatus.Failure, message: "使用方法: /tbr:config <mode|ff|teams|countdown> <値>" };
     let changes;
     const value = String(rawValue).toLowerCase();
-    if (key === "mode" && ["solo", "team"].includes(value)) changes = { mode: value, teamCount: value === "solo" ? null : 2, minPlayers: value === "solo" ? 1 : 3 };
+    if (key === "mode" && ["solo", "team"].includes(value)) changes = { mode: value, teamCount: value === "solo" ? null : 2, minPlayers: value === "solo" ? 1 : 4 };
     else if (key === "ff" && ["on", "off"].includes(value)) changes = { friendlyFire: value === "on" };
-    else if (key === "teams") { const teamCount = Number.parseInt(value, 10); if (Number.isInteger(teamCount) && teamCount >= 2 && teamCount <= 16) changes = { mode: "team", teamCount, minPlayers: 3 }; }
+    else if (key === "teams") { const teamCount = Number.parseInt(value, 10); if (Number.isInteger(teamCount) && teamCount >= 2 && teamCount <= 16) changes = { mode: "team", teamCount, minPlayers: Math.max(4, teamCount * 2) }; }
     else if (key === "countdown") { const countdownSeconds = Number.parseInt(value, 10); if (Number.isInteger(countdownSeconds) && countdownSeconds >= 1 && countdownSeconds <= 60) changes = { countdownSeconds }; }
     if (!changes) return { status: CustomCommandStatus.Failure, message: "値が不正です。modeはsolo/team、ffはon/off、teamsは2-16、countdownは1-60です" };
     system.run(() => { const result = app.configManager.applyConfigTransaction(changes); world.sendMessage(result.ok ? `TBR: 設定を変更しました。${configMessage()}` : `TBR: 設定変更失敗 - ${result.error.message}`); });
@@ -135,8 +146,13 @@ system.beforeEvents.startup.subscribe(({ customCommandRegistry }) => {
   });
   registerCommand(customCommandRegistry, "tbr:debug", "TBR内部状態をまとめて表示する", () => ({
     status: CustomCommandStatus.Success,
-    message: `診断: match=${app.matchManager.getState()} players=${app.playerManager.getStatus().length} teams=${app.teamManager.getTeams().length} zone=${app.zoneManager.getZoneStatus().phase} map=${STAGE_CONFIG.map.name} height=${STAGE_CONFIG.map.bounds.spawnY}`,
+    message: `診断: match=${app.matchManager.getState()} players=${app.playerManager.getStatus().length} teams=${app.teamManager.getTeams().length} zone=${app.zoneManager.getZoneStatus().phase} map=${STAGE_CONFIG.map.name} height=${STAGE_CONFIG.map.bounds.spawnY} scan=${app.mapScanner.getStatus().state} ${app.mapScanner.getStatus().scanned}/${app.mapScanner.getStatus().total} candidates=${app.mapScanner.getStatus().valid}`,
   }));
+  registerCommand(customCommandRegistry, "tbr:scan", "物資配置候補を再スキャンする", () => {
+    const result = app.mapScanner.rescan();
+    return { status: result.ok ? CustomCommandStatus.Success : CustomCommandStatus.Failure, message: result.ok ? "TBR: マップスキャンを開始しました" : `TBR: ${result.error.message}` };
+  });
+  registerCommand(customCommandRegistry, "tbr:history", "試合履歴を表示する", () => ({ status: CustomCommandStatus.Success, message: `TBR履歴: ${app.statisticsManager.list().slice(-10).map(x => `${x.matchId}:${x.result?.winnerId ?? "draw"}`).join(" / ") || "なし"}` }));
   registerCommand(customCommandRegistry, "tbr:team_random", "待機中のプレイヤーをランダム編成する", () => {
     const ids = app.playerManager.getStatus().filter(p => p.state === "WAITING").map(p => p.id);
     const result = app.teamManager.randomAssign(ids);
@@ -172,12 +188,23 @@ const getDimension = () => world.getDimension(STAGE_CONFIG.dimensionId);
 let zoneTimer = null;
 let actionbarTimer = null;
 let scoreboardTimer = null;
+let pillarTimer = null;
+let dropTimer = null;
+let dropMonitor = null;
+let dropping = false;
+let dropStartedAt = 0;
+let airplaneFloorBackup = [];
 let zoneElapsed = 0;
 let actionbarTicks = 0;
 const pendingLeaveTransfers = new Map();
 const VALID_CAUSES = new Set(["player_attack", "fall", "fire", "lava", "drowning", "explosion", "void", "environment", "unknown"]);
 const normalizeCause = (cause, attackerId = null) => attackerId ? "player_attack" : (VALID_CAUSES.has(cause) ? cause : "unknown");
-const spawnSupplies = () => { for (const position of STAGE_CONFIG.supplies) { const result = app.itemManager.spawnChest(getDimension(), position, [{ id: "minecraft:bread", amount: 4 }]); if (!result.ok) console.warn(`[TBR] supply chest failed: ${result.error.message}`); } };
+const spawnZonePillar = () => { const current = app.zoneManager.getZoneStatus().current; if (!current) return; try { const dimension = getDimension(); const minY = STAGE_CONFIG.map.bounds.minY ?? -64; const maxY = Math.min(STAGE_CONFIG.map.bounds.maxY ?? 320, minY + 96); for (let y = minY; y <= maxY; y += 4) { const location = { x: current.centerX + 0.5, y, z: current.centerZ + 0.5 }; try { dimension.spawnParticle("minecraft:endrod", location); } catch (_) { dimension.spawnParticle("minecraft:basic_flame_particle", location); } } } catch (error) { console.warn(`[TBR] zone pillar failed: ${error}`); } };
+const equipDropWings = player => { try { const equipment = player.getComponent("minecraft:equippable") ?? player.getComponent("equippable"); equipment?.setEquipment?.(EquipmentSlot.Chest, new ItemStack("minecraft:elytra", 1)); return !!equipment; } catch (_) { return false; } };
+const createDropPlatform = () => { const center = STAGE_CONFIG.airplane.floorCenter; airplaneFloorBackup = []; try { for (let x = center.x - 3; x <= center.x + 3; x++) for (let z = center.z - 2; z <= center.z + 2; z++) { const block = getDimension().getBlock({ x, y: center.y, z }); if (!block) return false; airplaneFloorBackup.push({ x, y: center.y, z, typeId: block.typeId }); block.setType("minecraft:glass"); } return true; } catch (error) { console.warn(`[TBR] drop platform creation failed: ${error}`); return false; } };
+const removeDropWings = player => { try { const equipment = player.getComponent("minecraft:equippable") ?? player.getComponent("equippable"); const item = equipment?.getEquipment?.(EquipmentSlot.Chest); if (item?.typeId === "minecraft:elytra") equipment.setEquipment(EquipmentSlot.Chest, undefined); } catch (_) {} };
+const startDrop = players => { dropping = true; dropStartedAt = Date.now(); for (const record of players) { const entity = app.playerManager.getEntity(record.id); if (entity) equipDropWings(entity); } dropTimer = system.runTimeout(() => { const center = STAGE_CONFIG.airplane.floorCenter; try { for (let x = center.x - 3; x <= center.x + 3; x++) for (let z = center.z - 2; z <= center.z + 2; z++) { const block = getDimension().getBlock({ x, y: center.y, z }); if (block?.typeId === "minecraft:glass") block.setType("minecraft:air"); } } catch (error) { console.warn(`[TBR] drop platform opening failed: ${error}`); } }, STAGE_CONFIG.airplane.countdownSeconds * 20); dropMonitor = system.runInterval(() => { const active = players.map(p => app.playerManager.getEntity(p.id)).filter(Boolean).filter(e => app.playerManager.isAlive(e.id)); const landed = active.filter(e => !e.isGliding && e.location.y < STAGE_CONFIG.airplane.floorCenter.y - 2); if (!active.length || landed.length === active.length || Date.now() - dropStartedAt > STAGE_CONFIG.airplane.maxDropSeconds * 1000) { for (const entity of landed) removeDropWings(entity); dropping = false; if (dropMonitor !== null) system.clearRun(dropMonitor); dropMonitor = null; } }, 5); };
+const spawnSupplies = () => { const cached = app.mapScanner.getCandidates(); const configured = STAGE_CONFIG.supplies; const fallback = []; const b = STAGE_CONFIG.map.bounds; if (!cached.length) for (let x = b.minX + 8; x <= b.maxX - 8 && fallback.length < 48; x += 32) for (let z = b.minZ + 8; z <= b.maxZ - 8 && fallback.length < 48; z += 32) fallback.push({ x, y: b.spawnY + 1, z }); const positions = [...configured, ...(cached.length ? cached : fallback)].filter((position, index, list) => list.findIndex(other => Math.hypot(other.x - position.x, other.z - position.z) < 2) === index).slice(0, 48); let placed = 0; for (const position of positions) { const result = app.itemManager.spawnChest(getDimension(), position, [{ id: "minecraft:bread", amount: 4 }]); if (result.ok) placed += 1; else console.warn(`[TBR] supply chest failed: ${result.error.message}`); } if (!placed) throw new Error("no supply could be placed"); };
 const clearScoreboard = objective => {
   for (const participant of objective.getParticipants?.() ?? []) {
     try { objective.removeParticipant(participant); } catch (_) { /* stale scoreboard entry */ }
@@ -202,11 +229,8 @@ const updateScoreboard = () => {
       `§r§a生存者数: §f${alive}/${records.length}`,
       "§r§8----------------",
     ];
-    records.forEach(record => {
-      const state = record.state === "ALIVE" ? "§a生存" : record.state === "ELIMINATED" ? "§c脱落" : `§7${playerStateLabel(record.state)}`;
-      const team = config.mode === "team" ? ` §8${app.teamManager.getTeamId(record.id) ?? "-"}` : "";
-      lines.push(`§r${state} §f${record.name} §6K:${record.kills ?? 0}${team}`);
-    });
+    lines.push(`§r§aチーム数: §f${config.mode === "team" ? app.teamManager.getTeams().length : 0}`);
+    lines.push(`§r§aZone: §f${app.zoneManager.getZoneStatus().stage ?? 0}/7`);
     lines.forEach((line, index) => objective.setScore(`${line}§${index}`, lines.length - index));
     scoreboard.setObjectiveAtDisplaySlot(DisplaySlotId.Sidebar, { objective, sortOrder: ObjectiveSortOrder.Descending });
   } catch (error) { console.warn(`[TBR] scoreboard update failed: ${error}`); }
@@ -262,10 +286,11 @@ const buildActionbar = (player, status, config) => {
   const blink = Math.floor(actionbarTicks / 10) % 2 === 0;
   const zoneState = inside ? "§aIN" : (blink ? "§c§lOUT" : "§r§cOUT");
   const distanceColor = inside ? (nearBoundary ? "§e" : "§f") : "§c";
+  const stage = STAGE_CONFIG.zone.stages?.[status.stage ?? 0] ?? STAGE_CONFIG.zone;
   let timerText = "§7ZONE --";
   if (status.phase === "shrinking") timerText = "§bSHRINKING";
   else if (status.phase === "warning") {
-    const remaining = Math.max(0, STAGE_CONFIG.zone.warningSeconds - zoneElapsed);
+    const remaining = Math.max(0, stage.warningSeconds - zoneElapsed);
     const timerColor = remaining <= 5 ? (blink ? "§c" : "§r§c") : remaining <= 10 ? "§e" : "§f";
     timerText = `${timerColor}ZONE ${formatClock(remaining)}`;
   }
@@ -295,6 +320,7 @@ world.afterEvents.playerSpawn.subscribe(({ player }) => {
 world.beforeEvents.entityHurt.subscribe(event => {
   if (event.hurtEntity?.typeId !== "minecraft:player") return;
   const attacker = event.damageSource?.damagingEntity;
+  if (dropping && attacker?.typeId === "minecraft:player") { event.cancel = true; return; }
   const result = app.combatManager.handleDamage({
     attackerId: attacker?.typeId === "minecraft:player" ? attacker.id : null,
     victimId: event.hurtEntity.id,
@@ -344,39 +370,45 @@ world.afterEvents.entityDie.subscribe(event => {
 app.eventBus.on(EVENTS.MATCH_STARTED, ({ matchId }) => {
   app.mapManager.initializeTickingAreas(STAGE_CONFIG.tickingAreas);
   const players = app.playerManager.getStatus().filter(p => p.state === "ALIVE");
+  if (!createDropPlatform()) { world.sendMessage("TBR: 降下用ガラス床を作成できませんでした"); app.matchManager.stopByAdmin(); return; }
   players.forEach((record, index) => {
     const entity = app.playerManager.getEntity(record.id);
-    if (entity) teleportTo(entity, STAGE_CONFIG.spawns[index % STAGE_CONFIG.spawns.length]);
+    if (entity) teleportTo(entity, STAGE_CONFIG.airplane.seats[index % STAGE_CONFIG.airplane.seats.length] ?? STAGE_CONFIG.spawns[index % STAGE_CONFIG.spawns.length]);
   });
   app.logManager.record("MATCH_START", { matchId, mode: app.configManager.getConfigValue("mode"), teamCount: app.configManager.getConfigValue("teamCount") });
+  app.statisticsManager.start({ matchId, config: app.configManager.getConfig(), players, teams: app.teamManager.getTeams() });
   for (const record of players) {
     const entity = app.playerManager.getEntity(record.id);
     if (entity) showTitle(entity, titleStyle.start);
   }
+  startDrop(players);
   spawnSupplies();
   app.zoneManager.initialize();
-  app.zoneManager.generateNextZone(STAGE_CONFIG.zone.minimumRadius);
+  app.zoneManager.generateNextZone(STAGE_CONFIG.zone.stages?.[0]?.targetRadius ?? STAGE_CONFIG.zone.minimumRadius);
   app.zoneManager.startWarning();
+  pillarTimer = system.runInterval(spawnZonePillar, 10);
+  spawnZonePillar();
   zoneElapsed = 0;
   actionbarTicks = 0;
   zoneTimer = system.runInterval(() => {
     if (app.matchManager.getState() !== "IN_PROGRESS") return;
     zoneElapsed++;
     const status = app.zoneManager.getZoneStatus();
-    if (status.phase === "warning" && zoneElapsed >= STAGE_CONFIG.zone.warningSeconds) { zoneElapsed = 0; app.zoneManager.startShrink(); }
+    const zoneStage = STAGE_CONFIG.zone.stages?.[status.stage ?? 0] ?? STAGE_CONFIG.zone;
+    if (status.phase === "warning" && zoneElapsed >= zoneStage.warningSeconds) { zoneElapsed = 0; app.zoneManager.startShrink(); }
     else if (status.phase === "shrinking") {
-      app.zoneManager.update(zoneElapsed / STAGE_CONFIG.zone.shrinkSeconds);
+      app.zoneManager.update(zoneElapsed / zoneStage.shrinkSeconds);
       if (app.zoneManager.getZoneStatus().phase === "stable") {
         zoneElapsed = 0;
         const current = app.zoneManager.getZoneStatus().current;
         if (!current || current.radius > STAGE_CONFIG.zone.minimumRadius) {
-          app.zoneManager.generateNextZone(STAGE_CONFIG.zone.minimumRadius);
-          app.zoneManager.startWarning();
+          const nextStage = STAGE_CONFIG.zone.stages?.[app.zoneManager.getZoneStatus().stage] ?? STAGE_CONFIG.zone;
+          if (current && current.radius > STAGE_CONFIG.zone.minimumRadius && nextStage) { app.zoneManager.generateNextZone(nextStage.targetRadius ?? STAGE_CONFIG.zone.minimumRadius); app.zoneManager.startWarning(); }
         }
       }
     }
     const alive = app.playerManager.getAlivePlayers().map(player => app.playerManager.getEntity(player.id)).filter(Boolean);
-    app.zoneManager.applyOutsideDamage(alive, STAGE_CONFIG.zone.damageAmount);
+    app.zoneManager.applyOutsideDamage(alive, zoneStage.damageAmount ?? STAGE_CONFIG.zone.damageAmount);
   }, 20);
   actionbarTimer = system.runInterval(() => {
     if (app.matchManager.getState() !== "IN_PROGRESS") return;
@@ -393,6 +425,7 @@ app.eventBus.on(EVENTS.MATCH_STARTED, ({ matchId }) => {
 });
 
 app.eventBus.on(EVENTS.PLAYER_ELIMINATED, ({ playerId }) => {
+  app.statisticsManager.onElimination(playerId, app.playerManager.getPlayer(playerId)?.cause ?? "unknown");
   const entity = app.playerManager.getEntity(playerId);
   if (entity) showTitle(entity, titleStyle.eliminated);
   const player = app.playerManager.getPlayer(playerId);
@@ -415,12 +448,21 @@ app.eventBus.on(EVENTS.COMBAT_KILL, ({ victimId, attackerId, cause }) => {
   }
   const source = attacker?.name ?? (cause === "unknown" ? "Environment" : cause);
   world.sendMessage(`§r§c[KILL] §b${source} §e»» §c${victim?.name ?? victimId} §7(${distance})`);
+  if (attackerId) app.statisticsManager.onKill(attackerId);
 });
+app.eventBus.on("combat:assist", ({ attackerId }) => app.statisticsManager.onAssist(attackerId));
 
 app.eventBus.on(EVENTS.MATCH_ENDED, data => {
+  app.statisticsManager.finish(data);
   if (zoneTimer !== null) { system.clearRun(zoneTimer); zoneTimer = null; }
   if (actionbarTimer !== null) { system.clearRun(actionbarTimer); actionbarTimer = null; }
   if (scoreboardTimer !== null) { system.clearRun(scoreboardTimer); scoreboardTimer = null; }
+  if (pillarTimer !== null) { system.clearRun(pillarTimer); pillarTimer = null; }
+  if (dropTimer !== null) { system.clearRun(dropTimer); dropTimer = null; }
+  if (dropMonitor !== null) { system.clearRun(dropMonitor); dropMonitor = null; }
+  dropping = false;
+  for (const block of airplaneFloorBackup) { try { getDimension().getBlock(block)?.setType(block.typeId); } catch (_) {} }
+  airplaneFloorBackup = [];
   const endObjective = world.scoreboard.getObjective("tbr_alive");
   if (endObjective) clearScoreboard(endObjective);
   try { world.scoreboard.clearObjectiveAtDisplaySlot(DisplaySlotId.Sidebar); } catch (_) { /* scoreboard may already be cleared */ }
@@ -444,6 +486,10 @@ app.eventBus.on(EVENTS.MATCH_ENDED, data => {
 });
 
 system.run(() => console.warn("[TBR] application initialized"));
+system.run(() => {
+  const scan = app.mapScanner.start();
+  if (!scan.ok) console.warn(`[TBR] map scan failed: ${scan.error.message}`);
+});
 system.run(() => {
   const ticking = app.mapManager.removeTickingAreas(STAGE_CONFIG.tickingAreas);
   if (ticking.ok) console.warn(`[TBR] stale ticking areas removed: ${ticking.data.removed}`);

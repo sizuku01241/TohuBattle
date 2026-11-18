@@ -21,6 +21,8 @@ import { PresetStorage } from "../storage/PresetStorage.js";
 import { InventoryTransferService } from "../inventory/InventoryTransferService.js";
 import { MinecraftInventoryAdapter } from "../platform/MinecraftInventoryAdapter.js";
 import { MinecraftLocatorAdapter } from "../platform/MinecraftLocatorAdapter.js";
+import { MapScanner } from "../map/MapScanner.js";
+import { MatchStatisticsManager } from "../match/MatchStatisticsManager.js";
 
 export function createApplication({ scheduler = null, notifier = () => {}, logger = console } = {}) {
   const errorHandler = new ErrorHandler({ logger });
@@ -31,16 +33,18 @@ export function createApplication({ scheduler = null, notifier = () => {}, logge
   const teamManager = new TeamManager({ eventBus });
   const mapManager = new MapManager({ world });
   mapManager.loadMap(STAGE_CONFIG.map);
+  const mapScanner = new MapScanner({ world, scheduler, storage: storageAdapter, mapManager });
   const zoneManager = new ZoneManager({ eventBus, mapManager });
   const itemManager = new ItemManager({ mapManager, storage: storageAdapter });
   const inventoryTransferService = new InventoryTransferService({ inventoryAdapter: new MinecraftInventoryAdapter() });
   const locatorAdapter = new MinecraftLocatorAdapter();
   const combatManager = new CombatManager({ eventBus, playerManager, teamManager, configManager });
-  const matchManager = new MatchManager({ eventBus, configManager, playerManager, teamManager, scheduler, notifier, storage: storageAdapter });
+  const matchManager = new MatchManager({ eventBus, configManager, playerManager, teamManager, scheduler, notifier, storage: storageAdapter, mapScanner });
   const logManager = new LogManager({ storage: new LogStorage({ adapter: storageAdapter }), exporter: new LogExporter({ output: logger }) });
+  const statisticsManager = new MatchStatisticsManager({ storage: storageAdapter });
   const presetStorage = new PresetStorage({ adapter: storageAdapter });
   const presetManager = new PresetManager({ configManager, storage: presetStorage });
   const adminManager = new AdminManager({ matchManager, configManager, teamManager, logManager });
   const uiManager = new UIManager();
-  return Object.freeze({ errorHandler, eventBus, configManager, presetManager, presetStorage, playerManager, teamManager, mapManager, zoneManager, itemManager, inventoryTransferService, locatorAdapter, combatManager, matchManager, logManager, adminManager, uiManager });
+  return Object.freeze({ errorHandler, eventBus, configManager, presetManager, presetStorage, playerManager, teamManager, mapManager, mapScanner, zoneManager, itemManager, inventoryTransferService, locatorAdapter, combatManager, matchManager, logManager, statisticsManager, adminManager, uiManager });
 }
