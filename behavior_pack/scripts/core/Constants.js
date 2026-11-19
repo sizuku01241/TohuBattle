@@ -15,7 +15,7 @@ export const DEFAULT_CONFIG = Object.freeze({
   zone: { warningSeconds: 150, shrinkSeconds: 60, minimumRadius: 6, damageAmount: 1, damageMultiplier: 1.4, stages: 7 },
   assistWindowSeconds: 10, assistDamage: 5, environmentKillWindowSeconds: 10,
   environmentDamage: Object.freeze({ lava: true, fire: true, drowning: true, suffocation: true, explosion: true, cactus: true, void: true, fall: false, lightning: false, wither: false, starvation: false }),
-  victoryConfirmationTicks: 60, dropProtectionSeconds: 15,
+  victoryConfirmationTicks: 60, dropProtectionSeconds: 20,
 });
 
 export const ok = (data = {}) => ({ ok: true, data });
