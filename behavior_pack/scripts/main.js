@@ -2,6 +2,7 @@ import { system, world, ItemStack, EquipmentSlot, DisplaySlotId, ObjectiveSortOr
 import { createApplication } from "./core/bootstrap.js";
 import { STAGE_CONFIG } from "./config/stageConfig.js";
 import { EVENTS } from "./core/Events.js";
+import { lootTables } from "./item/loot/index.js";
 
 export const app = createApplication({ scheduler: system, notifier: message => console.warn(`[TBR] ${message}`) });
 
@@ -216,17 +217,6 @@ let actionbarTicks = 0;
 const pendingLeaveTransfers = new Map();
 const supplyStagesSpawned = new Set();
 const supplySmokeCleared = new Set();
-const lootTables = Object.freeze({
-  common: [
-    { id: "minecraft:bread", amount: 4, weight: 0.75 }, { id: "minecraft:arrow", amount: 8, weight: 0.55 },
-    { id: "minecraft:bow", amount: 1, weight: 0.15 }, { id: "minecraft:stone_sword", amount: 1, weight: 0.2 },
-    { id: "minecraft:leather_chestplate", amount: 1, weight: 0.18 }, { id: "minecraft:water_bucket", amount: 1, weight: 0.12 },
-  ],
-  supply: [
-    { id: "minecraft:golden_apple", amount: 1, weight: 0.45 }, { id: "minecraft:iron_sword", amount: 1, weight: 0.35 },
-    { id: "minecraft:iron_chestplate", amount: 1, weight: 0.3 }, { id: "minecraft:arrow", amount: 16, weight: 0.8 },
-  ],
-});
 const VALID_CAUSES = new Set(["player_attack", "fall", "fire", "fire_tick", "lava", "drowning", "suffocation", "explosion", "entity_explosion", "block_explosion", "cactus", "lightning", "wither", "starve", "starvation", "void", "environment", "unknown"]);
 const normalizeCause = (cause, attackerId = null) => { if (attackerId) return "player_attack"; if (cause === "fire_tick") return "fire"; if (["entity_explosion", "block_explosion"].includes(cause)) return "explosion"; if (cause === "starve") return "starvation"; return VALID_CAUSES.has(cause) ? cause : "unknown"; };
 const spawnZonePillar = () => { const status = app.zoneManager.getZoneStatus(); const target = status.phase === "warning" || status.phase === "shrinking" ? status.next : status.current; if (!target) return; try { const dimension = getDimension(); const bounds = getActiveMap().bounds ?? STAGE_CONFIG.map.bounds; const minY = bounds.minY ?? -64; const maxY = Math.min(bounds.maxY ?? 320, minY + 96); for (let y = minY; y <= maxY; y += 4) { const location = { x: target.centerX + 0.5, y, z: target.centerZ + 0.5 }; try { dimension.spawnParticle("minecraft:endrod", location); } catch (_) { dimension.spawnParticle("minecraft:basic_flame_particle", location); } } } catch (error) { console.warn(`[TBR] zone pillar failed: ${error}`); } };
