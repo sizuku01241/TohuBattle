@@ -572,6 +572,7 @@ app.eventBus.on(EVENTS.MATCH_ENDED, data => {
   dropProtectionUntil = 0;
   dropFloorOpened = false;
   supplySmokeCleared.clear();
+  supplyStagesSpawned.clear();
   for (const block of airplaneFloorBackup) { try { getDimension().getBlock(block)?.setType(block.typeId); } catch (_) {} }
   airplaneFloorBackup = [];
   const endObjective = world.scoreboard.getObjective("tbr_alive");
@@ -579,7 +580,8 @@ app.eventBus.on(EVENTS.MATCH_ENDED, data => {
   try { world.scoreboard.clearObjectiveAtDisplaySlot(DisplaySlotId.Sidebar); } catch (_) { /* scoreboard may already be cleared */ }
   app.zoneManager.initialize(null);
   app.locatorAdapter.clear();
-  app.itemManager.clearSpawned(id => world.getDimension(id ?? STAGE_CONFIG.dimensionId));
+  const cleanedLoot = app.itemManager.clearSpawned(id => world.getDimension(id ?? STAGE_CONFIG.dimensionId));
+  if (cleanedLoot.ok && cleanedLoot.data.skippedBlocks > 0) console.warn(`[TBR] cleanup skipped ${cleanedLoot.data.skippedBlocks} tracked supply/loot blocks`);
   app.mapManager.removeTickingAreas(getActiveTickingAreas());
   app.logManager.record("MATCH_END", data);
   for (const record of app.playerManager.getStatus()) {
