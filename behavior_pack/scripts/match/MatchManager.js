@@ -29,11 +29,12 @@ export class MatchManager {
     if (config.mode === GAME_MODES.TEAM) {
       if (!config.teamCount) return fail(ERROR_CODES.INVALID_TEAM_COUNT, "teamCount is required");
       const ids = players.map(p => p.id);
-      if (this.teamManager.getTeams().length !== config.teamCount || !this.teamManager.hasValidAssignment(ids)) {
+      const teamOptions = { fixedTeamSize: config.fixedTeamSize ?? null };
+      if (this.teamManager.getTeams().length !== config.teamCount || !this.teamManager.hasValidAssignment(ids, teamOptions)) {
         const created = this.teamManager.createTeams(config.teamCount); if (!created.ok) return created;
-        const assigned = this.teamManager.randomAssign(ids); if (!assigned.ok) return assigned;
+        const assigned = this.teamManager.randomAssign(ids, Math.random, teamOptions); if (!assigned.ok) return assigned;
       }
-      const result = this.teamManager.validateTeams(ids); if (!result.ok) return result;
+      const result = this.teamManager.validateTeams(ids, teamOptions); if (!result.ok) return result;
     }
     return ok({ players, config });
   }

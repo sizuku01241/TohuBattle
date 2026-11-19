@@ -19,6 +19,14 @@ test("teams are balanced and cannot be changed after locking", () => {
   const teams = new TeamManager(); teams.createTeams(2); assert.equal(teams.randomAssign(["a", "b", "c", "d"]).ok, true); assert.equal(teams.validateTeams(["a", "b", "c", "d"]).ok, true); teams.lockTeams(); assert.equal(teams.assignPlayer("a", "team_02").ok, false);
 });
 
+test("automatic team assignment allows a size difference of one but fixed teams require exact capacity", () => {
+  const teams = new TeamManager(); teams.createTeams(2);
+  assert.equal(teams.randomAssign(["a", "b", "c", "d", "e"]).ok, true);
+  assert.equal(teams.validateTeams(["a", "b", "c", "d", "e"]).ok, true);
+  const fixed = new TeamManager(); fixed.createTeams(2);
+  assert.equal(fixed.randomAssign(["a", "b", "c", "d", "e"], Math.random, { fixedTeamSize: 3 }).ok, false);
+});
+
 test("friendly fire is cancelled and enemy damage becomes an assistable attack", () => {
   const { pm } = setupPlayers(["a", "b", "c"]); pm.activatePlayer("a"); pm.activatePlayer("b"); pm.activatePlayer("c"); const teams = new TeamManager(); teams.createTeams(2); teams.assignPlayer("a", "team_01"); teams.assignPlayer("b", "team_01"); teams.assignPlayer("c", "team_02"); const config = { getConfigValue: key => ({ friendlyFire: false }[key]), getConfig: () => ({ assistWindowSeconds: 10, assistDamage: 5, environmentKillWindowSeconds: 10 }) }; const combat = new CombatManager({ eventBus: new EventBus(), playerManager: pm, teamManager: teams, configManager: config, clock: () => 1000 }); assert.equal(combat.handleDamage({ attackerId: "a", victimId: "b", amount: 5 }).data.cancelled, true); assert.equal(combat.handleDamage({ attackerId: "c", victimId: "b", amount: 5 }).data.cancelled, false); assert.equal(pm.getPlayer("c").damage, 5);
   combat.reset(); assert.equal(combat.getLastAttacker("b"), null);

@@ -11,18 +11,22 @@ export class TeamManager {
   getTeamColor(teamId) { return this.teams.get(teamId)?.color ?? "§f"; }
   getMembers(teamId) { return this.teams.get(teamId)?.members.slice() ?? []; }
   getTeams() { return [...this.teams.values()].map(t => ({ id: t.id, members: [...t.members], color: t.color })); }
-  validateTeams(playerIds) {
-    if (!this.teams.size || playerIds.length % this.teams.size !== 0) return fail(ERROR_CODES.INVALID_TEAM_COUNT, "players cannot be divided evenly");
-    const size = playerIds.length / this.teams.size; if (size < 2) return fail(ERROR_CODES.INVALID_TEAM_COUNT, "each team needs at least 2 players");
+  validateTeams(playerIds, { allowUneven = true, fixedTeamSize = null } = {}) {
+    if (!this.teams.size) return fail(ERROR_CODES.INVALID_TEAM_COUNT, "teams are not created");
+    if (fixedTeamSize !== null && playerIds.length !== this.teams.size * fixedTeamSize) return fail(ERROR_CODES.INVALID_TEAM_COUNT, "players do not fill the fixed team size");
+    const sizes = [...this.teams.values()].map(team => team.members.filter(id => playerIds.includes(id)).length);
+    if (sizes.some(size => size < 2)) return fail(ERROR_CODES.INVALID_TEAM_COUNT, "each team needs at least 2 players");
+    if (!allowUneven && new Set(sizes).size > 1) return fail(ERROR_CODES.TEAM_SIZE_MISMATCH, "team sizes must be equal");
+    if (Math.max(...sizes) - Math.min(...sizes) > 1) return fail(ERROR_CODES.TEAM_SIZE_MISMATCH, "team size difference must be at most 1");
+    const size = Math.max(...sizes);
     const expected = new Set(playerIds); const assigned = playerIds.filter(id => expected.has(id) && this.playerToTeam.has(id));
     if (assigned.length !== playerIds.length || new Set(assigned).size !== playerIds.length) return fail("TEAM_ASSIGNMENT_INCOMPLETE", "all players must be assigned to exactly one team");
-    if ([...this.teams.values()].some(team => team.members.filter(id => expected.has(id)).length !== size)) return fail("TEAM_SIZE_MISMATCH", "team sizes are not equal");
     return ok({ teamSize: size });
   }
-  hasValidAssignment(playerIds) { return this.validateTeams(playerIds).ok; }
-  randomAssign(playerIds, random = Math.random) {
+  hasValidAssignment(playerIds, options = {}) { return this.validateTeams(playerIds, options).ok; }
+  randomAssign(playerIds, random = Math.random, { fixedTeamSize = null } = {}) {
     if (this.locked) return fail("TEAM_ALREADY_LOCKED", "チームはロックされています");
-    if (!this.teams.size || playerIds.length % this.teams.size !== 0 || playerIds.length / this.teams.size < 2) return fail(ERROR_CODES.INVALID_TEAM_COUNT, "players cannot be divided into equal teams of at least 2");
+    if (!this.teams.size || (fixedTeamSize !== null ? playerIds.length !== this.teams.size * fixedTeamSize : playerIds.length < this.teams.size * 2)) return fail(ERROR_CODES.INVALID_TEAM_COUNT, "players cannot fill teams of at least 2");
     const shuffled = [...playerIds];
     for (let i = shuffled.length - 1; i > 0; i--) { const j = Math.floor(random() * (i + 1)); [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]; }
     const teams = [...this.teams.keys()];
