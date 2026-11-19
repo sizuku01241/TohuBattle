@@ -154,9 +154,8 @@ system.beforeEvents.startup.subscribe(({ customCommandRegistry }) => {
   }));
   registerCommand(customCommandRegistry, "tbr:supply", "サプライを即時出現させるデバッグコマンド", () => {
     if (!["DROPPING", "IN_PROGRESS"].includes(app.matchManager.getState())) return { status: CustomCommandStatus.Failure, message: "TBR: 試合中のみサプライを出現できます" };
-    const stage = Math.max(-1, ...supplyStagesSpawned) + 1;
-    const spawned = spawnSupplyStage(stage, true);
-    return { status: spawned ? CustomCommandStatus.Success : CustomCommandStatus.Failure, message: spawned ? "TBR: サプライを即時出現させました" : "TBR: サプライを出現できませんでした（上限または候補地点不足）" };
+    system.run(() => { const stage = Math.max(-1, ...supplyStagesSpawned) + 1; const spawned = spawnSupplyStage(stage, true); if (!spawned) world.sendMessage("TBR: サプライを出現できませんでした（上限または候補地点不足）"); });
+    return { status: CustomCommandStatus.Success, message: "TBR: サプライ出現を要求しました" };
   });
   registerCommand(customCommandRegistry, "tbr:scan", "物資配置候補を再スキャンする", () => {
     queueMapScan(true);
