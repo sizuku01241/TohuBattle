@@ -1,4 +1,7 @@
-export const MATCH_STATES = Object.freeze({ LOBBY: "LOBBY", COUNTDOWN: "COUNTDOWN", IN_PROGRESS: "IN_PROGRESS", ENDING: "ENDING" });
+export const MATCH_STATES = Object.freeze({
+  LOBBY: "LOBBY", PREPARING: "PREPARING", COUNTDOWN: "COUNTDOWN", DROPPING: "DROPPING",
+  IN_PROGRESS: "IN_PROGRESS", FINISHING: "FINISHING", CLEANUP: "CLEANUP", ENDING: "ENDING",
+});
 export const PLAYER_STATES = Object.freeze({ WAITING: "WAITING", ALIVE: "ALIVE", ELIMINATED: "ELIMINATED", DISCONNECTED: "DISCONNECTED", SPECTATOR: "SPECTATOR" });
 export const GAME_MODES = Object.freeze({ SOLO: "solo", TEAM: "team" });
 export const ERROR_CODES = Object.freeze({
@@ -9,8 +12,10 @@ export const ERROR_CODES = Object.freeze({
 export const DEFAULT_CONFIG = Object.freeze({
   mode: GAME_MODES.SOLO, teamCount: null, mapName: "default", countdownSeconds: 10,
   friendlyFire: false, minPlayers: 1, maxPlayers: 32,
-  zone: { warningSeconds: 150, shrinkSeconds: 60, minimumRadius: 6, damageAmount: 1 },
-  assistWindowSeconds: 10, assistDamage: 5
+  zone: { warningSeconds: 150, shrinkSeconds: 60, minimumRadius: 6, damageAmount: 1, damageMultiplier: 1.4, stages: 7 },
+  assistWindowSeconds: 10, assistDamage: 5, environmentKillWindowSeconds: 10,
+  environmentDamage: Object.freeze({ lava: true, fire: true, drowning: true, suffocation: true, explosion: true, void: true }),
+  victoryConfirmationTicks: 60, dropProtectionSeconds: 10,
 });
 
 export const ok = (data = {}) => ({ ok: true, data });

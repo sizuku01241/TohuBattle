@@ -1,0 +1,59 @@
+# TBR-001 実装状況
+
+この表は、会話上の報告ではなく、2026-11-19時点のリポジトリ内容を基準にした状態整理です。
+
+## コード検証済み
+
+| 項目 | 状態 | 根拠 |
+|---|---|---|
+| Solo/Teamの試合状態管理 | 実装済み・自動テスト済み | `MatchManager` が `LOBBY/COUNTDOWN/PREPARING/DROPPING/IN_PROGRESS/FINISHING/CLEANUP` を管理、`tests/core.test.js` |
+| チーム均等編成・手動編成 | 実装済み・自動テスト済み | `TeamManager`, `tbr:team_assign` |
+| Friendly Fire・キル・アシスト | 実装済み・自動テスト済み | `CombatManager`、キル・アシストをCombat Logへ保存 |
+| 個人キルとチームキルの分離記録 | 実装済み・自動テスト済み | `MatchStatisticsManager.teamStats`, `tests/core.test.js` |
+| Zone中心移動・縮小補間 | 実装済み・自動テスト済み | `ZoneManager` |
+| 通常物資・地面物資・段階サプライ | 実装済み | `main.js`, `ItemManager`、マップ全体への分散配置と地点ごとの最大3回配置リトライを含む。未開封サプライはZone移動2回で削除、開封済みは30秒後に削除 |
+| 宝箱配置・削除の過去実機テスト | 過去の実機確認あり・削除修正済み、再確認待ち | ユーザー報告では以前の宝箱テストで動作。再起動復元後にDimensionを解決せず消え残る経路を修正 |
+| 物資の所有追跡・安全な削除 | 実装済み | `ItemManager` |
+| 物資配置時の地形上書き防止・重複拒否 | 実装済み | 配置先が空気でない場合と既存TBR物資位置を拒否 |
+| 物資配置状況の保持・診断表示 | 実装済み | 予定数・成功数・失敗数・状態を `ItemManager` と `/tbr:debug` で確認 |
+| Dynamic Properties分割保存 | 実装済み・自動テスト済み | `MinecraftStorageAdapter` |
+| 複数マップ登録・選択 | 実装済み・自動テスト済み | `MapManager`、選択時の候補再スキャン、選択中マップの範囲・ロビー・飛行機・Ticking Area・物資設定を試合処理が参照 |
+| 追加マップ定義の投入 | 未完了 | 起動時に登録される定義は現在 `STAGE_CONFIG.map` の1件。追加マップの座標・範囲・物資地点は未提供のため、勝手に生成しない |
+| 勝利確定の再判定 | 実装済み | `MatchManager` |
+| 試合終了時の結果・ランキング表示 | 実装済み | `main.js` が `MatchStatistics` から順位・名前・キル・与ダメージ・生存時間をチャット表示 |
+| 管理者強制終了の確認操作 | 実装済み・自動テスト済み | `MatchManager` |
+| 設定値検証 | 実装済み・自動テスト済み | `ConfigManager` |
+| 環境ダメージ個別設定 | 実装済み・自動テスト済み | `CombatManager`, `ConfigManager` |
+| ログ保存失敗時の再試行保持 | 実装済み・自動テスト済み | `LogManager` |
+| 地形スキャン高速化・範囲変更時キャッシュ無効化 | 実装済み・自動テスト済み | `MapScanner` |
+| マップ別の通常物資・地面物資・サプライ配置数 | 実装済み | 選択中マップの `chestCount` / `groundItemCount` / `supplyCount` を配置処理が参照 |
+
+## Minecraft実機確認待ち
+
+- Script API 2.12.0-betaでの全イベント購読（主要購読は未提供時に初期化を停止しない optional subscribe 化済み）
+- 地形スキャン、候補地点、実ワールド物資配置
+- エリトラ降下、床開放、降下後PvP保護
+- 標準Particle光柱、サプライ煙、Locator Bar
+- Ticking Areaの読み込み・解除（登録コマンド完了を待ってから物資配置へ進む実装済み、実機確認待ち）
+- 切断時の防具/オフハンドを含むアイテム移譲
+- 再起動中の物資・試合状態復旧
+- 3〜32人のSolo/Team統合試験
+- 追加マップ定義を登録した場合のマップ切替・実機試験
+
+## 未確定または設定値として要決定
+
+- 実機で採用するParticle種別・光柱高さ・間隔
+- 実マップごとのアイテム確率表
+- 同時脱落の時間幅と引き分け処理の最終値
+- 環境ダメージの許可範囲
+
+## 検証コマンド
+
+```text
+npm test
+npm run validate
+```
+
+`npm run validate` はBehavior Pack/Resource Packのmanifestと、Behavior Pack内の全JavaScript構文を検査します。Minecraft実機の動作確認を代替するものではありません。
+
+実機確認は [RUNTIME_TEST_CHECKLIST.md](./RUNTIME_TEST_CHECKLIST.md) の手順と期待結果に従って記録する。

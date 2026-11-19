@@ -39,7 +39,7 @@ export function createApplication({ scheduler = null, notifier = () => {}, logge
   const inventoryTransferService = new InventoryTransferService({ inventoryAdapter: new MinecraftInventoryAdapter() });
   const locatorAdapter = new MinecraftLocatorAdapter();
   const combatManager = new CombatManager({ eventBus, playerManager, teamManager, configManager });
-  const matchManager = new MatchManager({ eventBus, configManager, playerManager, teamManager, scheduler, notifier, storage: storageAdapter, mapScanner });
+  const matchManager = new MatchManager({ eventBus, configManager, playerManager, teamManager, mapManager, scheduler, notifier, storage: storageAdapter, mapScanner });
   const logManager = new LogManager({ storage: new LogStorage({ adapter: storageAdapter }), exporter: new LogExporter({ output: logger }) });
   const statisticsManager = new MatchStatisticsManager({ storage: storageAdapter });
   const presetStorage = new PresetStorage({ adapter: storageAdapter });

@@ -1,78 +1,32 @@
-import { ok } from "../core/Constants.js";
+import { ok, fail } from "../core/Constants.js";
 import { ItemStack } from "@minecraft/server";
+
+// Owns every block/entity created by TBR. Cleanup only touches registered objects.
 export class ItemManager {
-  constructor({ random = Math.random, storage = null, storageKey = "tbr:spawned_blocks" } = {}) {
-    this.random = random;
-    this.storage = storage;
-    this.storageKey = storageKey;
-    this.loot = [];
-    this.spawnedEntities = [];
-    const persisted = this.storage?.get?.(this.storageKey);
-    this.spawnedBlocks = Array.isArray(persisted) ? persisted.map(entry => ({ ...entry, dimension: null })) : [];
-  }
-  generateLoot(table = []) { return ok(table.filter(item => !item.weight || this.random() <= item.weight).map(item => ({ ...item }))); }
-  placeGroundItems(items = []) { this.loot.push(...items.map(item => ({ ...item }))); return ok({ count: items.length }); }
-  refillChests() { return ok({ count: 0 }); }
-  spawnSupply(position, contents = [], entities = []) { this.spawnedEntities.push(...entities.filter(Boolean)); return ok({ position: { ...position }, contents: [...contents], entityCount: entities.length }); }
-  spawnChest(dimension, location, contents = []) {
-    try {
-      const block = dimension?.getBlock?.(location);
-      if (!block) return { ok: false, error: { code: "BLOCK_UNAVAILABLE", message: "supply chest location is unavailable" } };
-      const originalTypeId = block.typeId;
-      block.setType("minecraft:chest");
-      const container = block.getComponent("inventory")?.container;
-      if (!container) {
-        try { block.setType(originalTypeId); } catch (_) { /* best effort rollback */ }
-        return { ok: false, error: { code: "CHEST_INVENTORY_UNAVAILABLE", message: "supply chest inventory is unavailable" } };
-      }
-      contents.forEach((item, index) => container.setItem(index, new ItemStack(item.id, item.amount ?? 1)));
-      this.registerBlock(dimension, location, originalTypeId);
-      return ok({ location: { ...location }, itemCount: contents.length });
-    } catch (error) {
-      return { ok: false, error: { code: "CHEST_SPAWN_FAILED", message: String(error) } };
-    }
-  }
-  registerBlock(dimension, location, originalTypeId = "minecraft:air") {
-    if (!dimension || !location) return ok({ registered: false });
-    const entry = { dimension, dimensionId: dimension.id ?? "overworld", location: { ...location }, originalTypeId };
-    this.spawnedBlocks.push(entry);
-    this.storage?.set?.(this.storageKey, this.spawnedBlocks.map(item => ({ dimensionId: item.dimensionId, location: item.location, originalTypeId: item.originalTypeId })));
-    return ok({ registered: true });
-  }
-  recover(dimensionResolver) {
-    let restored = 0;
-    for (const entry of this.spawnedBlocks) {
-      try {
-        const dimension = entry.dimension ?? dimensionResolver?.(entry.dimensionId);
-        const block = dimension?.getBlock?.(entry.location);
-        if (block) { block.setType(entry.originalTypeId || "minecraft:air"); restored += 1; }
-      } catch (_) { /* interrupted match block may be unloaded */ }
-    }
-    this.spawnedBlocks = [];
-    this.storage?.set?.(this.storageKey, []);
-    return ok({ restored });
-  }
-  clearSpawned() {
-    let entityCount = 0;
-    let blockCount = 0;
-    for (const entity of this.spawnedEntities) {
-      try { entity.remove?.(); entityCount += 1; } catch (_) { /* entity may be invalid */ }
-    }
-    for (const entry of this.spawnedBlocks) {
-      try {
-        const block = entry.dimension.getBlock(entry.location);
-        if (block) {
-          block.setType(entry.originalTypeId || "minecraft:air");
-          blockCount += 1;
-        }
-      } catch (_) { /* block may be unloaded or already removed */ }
-    }
-    this.spawnedEntities = [];
-    this.spawnedBlocks = [];
-    this.storage?.set?.(this.storageKey, []);
-    this.loot = [];
-    return ok({ entityCount, blockCount, count: entityCount + blockCount });
-  }
+  constructor({ random = Math.random, storage = null, storageKey = "tbr:spawned_blocks" } = {}) { this.random = random; this.storage = storage; this.storageKey = storageKey; this.loot = []; this.spawnedEntities = []; this.placement = { planned: 0, success: 0, failed: 0, state: "WAITING" }; const saved = storage?.get?.(storageKey); this.spawnedBlocks = Array.isArray(saved) ? saved.map(entry => ({ ...entry, dimension: null })) : []; }
+  beginPlacement(planned = 0) { this.placement = { planned: Math.max(0, Number(planned) || 0), success: 0, failed: 0, state: "PLACING" }; return ok(this.getPlacementStatus()); }
+  recordPlacement(success) { if (success) this.placement.success += 1; else this.placement.failed += 1; return ok(this.getPlacementStatus()); }
+  finishPlacement() { this.placement.state = "COMPLETE"; return ok(this.getPlacementStatus()); }
+  abortPlacement() { this.placement.state = "ABORTED"; return ok(this.getPlacementStatus()); }
+  getPlacementStatus() { return { ...this.placement }; }
+  generateLoot(table = [], slots = 3) { const result = []; const used = new Set(); for (const item of [...table].filter(item => item?.id && (item.weight === undefined || this.random() < item.weight)).sort(() => this.random() - 0.5)) { if (result.length >= slots || used.has(item.id)) continue; used.add(item.id); result.push({ id: item.id, amount: Math.max(1, Math.floor(item.amount ?? 1)), rarity: item.rarity ?? 1 }); } return ok(result); }
+  placeGroundItems(items = []) { this.loot.push(...items.map(item => ({ ...item, collected: false }))); return ok({ count: items.length }); }
+  refillChests() { return fail("LOOT_RESPAWN_DISABLED", "loot does not respawn during a match"); }
+  registerEntity(entity, kind = "tbr") { if (!entity) return fail("ENTITY_UNAVAILABLE", "entity is unavailable"); this.spawnedEntities.push({ entity, kind }); return ok({ registered: true }); }
+  spawnGroundItem(dimension, location, item) { try { if (!dimension?.spawnItem || !item?.id) return fail("ITEM_SPAWN_FAILED", "invalid ground item"); const entity = dimension.spawnItem(new ItemStack(item.id, item.amount ?? 1), location); this.registerEntity(entity, "ground_item"); return ok({ entity }); } catch (error) { return fail("ITEM_SPAWN_FAILED", String(error)); } }
+  spawnSupply(position, contents = [], entities = []) { entities.filter(Boolean).forEach(entity => this.registerEntity(entity, "supply")); return ok({ position: { ...position }, contents: [...contents], entityCount: entities.length }); }
+  isTrackedLocation(dimension, location) { return this.spawnedBlocks.some(entry => (entry.dimension === dimension || entry.dimensionId === (dimension?.id ?? "overworld")) && entry.location?.x === location?.x && entry.location?.y === location?.y && entry.location?.z === location?.z); }
+  isPlaceableBlock(block) { return ["minecraft:air", "minecraft:cave_air", "minecraft:void_air"].includes(block?.typeId); }
+  spawnChest(dimension, location, contents = [], kind = "chest", blockType = "minecraft:chest") { try { const block = dimension?.getBlock?.(location); if (!block) return fail("BLOCK_UNAVAILABLE", "item location is unavailable"); if (this.isTrackedLocation(dimension, location)) return fail("ITEM_LOCATION_OCCUPIED", "item location is already used"); if (!this.isPlaceableBlock(block)) return fail("ITEM_LOCATION_OCCUPIED", `item location contains ${block.typeId}`); const originalTypeId = block.typeId; block.setType(blockType); const container = block.getComponent("inventory")?.container; if (!container) { block.setType(originalTypeId); return fail("CHEST_INVENTORY_UNAVAILABLE", "container inventory is unavailable"); } contents.slice(0, container.size).forEach((item, index) => { if (item?.id) container.setItem(index, new ItemStack(item.id, item.amount ?? 1)); }); const registered = this.registerBlock(dimension, location, originalTypeId, kind, blockType); if (!registered.ok) { block.setType(originalTypeId); return registered; } return ok({ location: { ...location }, itemCount: contents.length }); } catch (error) { return fail("CHEST_SPAWN_FAILED", String(error)); } }
+  registerBlock(dimension, location, originalTypeId = "minecraft:air", kind = "tbr", placedTypeId = "minecraft:chest") { if (!dimension || !location) return fail("BLOCK_UNAVAILABLE", "block location is unavailable"); const block = dimension.getBlock?.(location); const container = block?.getComponent?.("inventory")?.container; const initial = container ? this.containerSignature(container) : ""; this.spawnedBlocks.push({ dimension, dimensionId: dimension.id ?? "overworld", location: { x: location.x, y: location.y, z: location.z }, originalTypeId, placedTypeId, kind, createdAt: Date.now(), openedAt: null, initial }); this.persistBlocks(); return ok({ registered: true }); }
+  containerSignature(container) { const parts = []; for (let slot = 0; slot < (container?.size ?? 0); slot++) { const item = container.getItem?.(slot); parts.push(item ? `${slot}:${item.typeId}:${item.amount}` : `${slot}:`); } return parts.join("|"); }
+  markSupplyOpened(location, now = Date.now()) { const entry = this.spawnedBlocks.find(item => item.kind === "supply" && item.location.x === location?.x && item.location.y === location?.y && item.location.z === location?.z); if (entry && !entry.openedAt) { entry.openedAt = now; this.persistBlocks(); return true; } return false; }
+  advanceSupplyZone(dimensionResolver = null) { const removed = []; for (const entry of [...this.spawnedBlocks]) { if (entry.kind !== "supply" || entry.openedAt) continue; entry.zoneMoves = (entry.zoneMoves ?? 0) + 1; if (entry.zoneMoves < 2) continue; const result = this.removeBlock(entry, dimensionResolver); if (result.removed) removed.push({ ...entry.location, reason: "zone_moved_twice" }); } this.persistBlocks(); return ok({ removed }); }
+  evaluateSupplies(dimension, isOutside, now = Date.now()) { const removed = []; for (const entry of [...this.spawnedBlocks]) { if (entry.kind !== "supply") continue; try { const resolved = entry.dimension ?? dimension?.(entry.dimensionId); const target = resolved?.getBlock?.(entry.location); const container = target?.getComponent?.("inventory")?.container; if (!target || !container) continue; const changed = this.containerSignature(container) !== entry.initial; if (changed && !entry.openedAt) entry.openedAt = now; const outside = !!isOutside?.(entry.location); const expired = entry.openedAt ? now - entry.openedAt >= 30000 : false; if (outside || expired) { const result = this.removeBlock(entry, dimension); if (result.removed) removed.push({ ...entry.location, reason: outside ? "outside_zone" : "opened_timeout" }); } } catch (_) {} } this.persistBlocks(); return ok({ removed }); }
+  removeBlock(entry, dimensionResolver = null) { try { const dimension = entry.dimension ?? dimensionResolver?.(entry.dimensionId); const block = dimension?.getBlock?.(entry.location); if (!block) return { removed: false, reason: "block_unavailable" }; if (block.typeId !== (entry.placedTypeId ?? "minecraft:chest")) return { removed: false, reason: "block_mismatch", actual: block.typeId }; block.setType(entry.originalTypeId || "minecraft:air"); this.spawnedBlocks = this.spawnedBlocks.filter(item => item !== entry); return { removed: true }; } catch (error) { return { removed: false, reason: "exception", error: String(error) }; } }
+  persistBlocks() { return this.storage?.set?.(this.storageKey, this.spawnedBlocks.map(({ dimension, ...entry }) => entry)) ?? true; }
+  recover(dimensionResolver) { return this.clearSpawned(dimensionResolver); }
+  clearSpawned(dimensionResolver = null) { let entityCount = 0; let blockCount = 0; const remaining = []; for (const entry of this.spawnedEntities) { try { entry.entity?.remove?.(); entityCount += 1; } catch (_) {} } for (const entry of this.spawnedBlocks) { const result = this.removeBlock(entry, dimensionResolver); if (result.removed) blockCount += 1; else remaining.push({ ...entry, dimension: undefined, cleanupError: result.reason }); } this.spawnedEntities = []; this.spawnedBlocks = remaining; this.loot = []; this.persistBlocks(); return ok({ entityCount, blockCount, skippedBlocks: remaining.length, count: entityCount + blockCount }); }
   getItemInfo(itemId) { return this.loot.find(item => item.id === itemId) ?? null; }
   handleItemObtained(itemId) { this.loot = this.loot.filter(item => item.id !== itemId); return ok(); }
 }

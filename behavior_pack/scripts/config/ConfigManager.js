@@ -8,7 +8,7 @@ export class ConfigManager {
     this.storageKey = storageKey;
     const saved = this.storage?.get?.(this.storageKey);
     const candidate = saved && this.validateConfig(saved).ok ? saved : this.defaults;
-    this.config = { ...candidate };
+    this.config = { ...candidate, zone: { ...(candidate.zone ?? {}) } };
   }
   getConfig() { return { ...this.config }; }
   getConfigValue(key) { return this.config[key]; }
@@ -18,7 +18,11 @@ export class ConfigManager {
     // The sample world keeps Solo at one player for local demonstrations.
     // Team mode switches minPlayers back to the approved production minimum.
     if (candidate.mode === "team" && candidate.minPlayers < 4) return fail(ERROR_CODES.CONFIG_VALIDATION_FAILED, "team mode requires at least 4 players");
-    if (candidate.minPlayers < 1 || candidate.maxPlayers > 32 || candidate.minPlayers > candidate.maxPlayers) return fail(ERROR_CODES.CONFIG_VALIDATION_FAILED, "player limits are invalid");
+    if (!Number.isInteger(candidate.minPlayers) || !Number.isInteger(candidate.maxPlayers) || candidate.minPlayers < 1 || candidate.maxPlayers > 32 || candidate.minPlayers > candidate.maxPlayers) return fail(ERROR_CODES.CONFIG_VALIDATION_FAILED, "player limits are invalid");
+    if (!Number.isInteger(candidate.countdownSeconds) || candidate.countdownSeconds < 1 || candidate.countdownSeconds > 300) return fail(ERROR_CODES.CONFIG_VALIDATION_FAILED, "countdownSeconds must be 1-300");
+    const zone = candidate.zone ?? {}; if (!Number.isFinite(zone.warningSeconds) || zone.warningSeconds < 0 || !Number.isFinite(zone.shrinkSeconds) || zone.shrinkSeconds <= 0 || !Number.isFinite(zone.minimumRadius) || zone.minimumRadius <= 0 || !Number.isFinite(zone.damageAmount) || zone.damageAmount < 0 || !Number.isFinite(zone.damageMultiplier) || zone.damageMultiplier < 1) return fail(ERROR_CODES.CONFIG_VALIDATION_FAILED, "zone settings are invalid");
+    if (!Number.isFinite(candidate.assistWindowSeconds) || candidate.assistWindowSeconds < 0 || !Number.isFinite(candidate.assistDamage) || candidate.assistDamage < 0 || !Number.isFinite(candidate.dropProtectionSeconds) || candidate.dropProtectionSeconds < 0) return fail(ERROR_CODES.CONFIG_VALIDATION_FAILED, "combat settings are invalid");
+    if (!candidate.environmentDamage || typeof candidate.environmentDamage !== "object" || Object.values(candidate.environmentDamage).some(value => typeof value !== "boolean")) return fail(ERROR_CODES.CONFIG_VALIDATION_FAILED, "environmentDamage settings are invalid");
     return ok();
   }
   setConfigValue(key, value) { return this.applyConfigTransaction({ [key]: value }); }

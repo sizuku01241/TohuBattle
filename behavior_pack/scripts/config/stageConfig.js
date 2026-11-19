@@ -18,6 +18,18 @@ export const STAGE_CONFIG = Object.freeze({
   map: Object.freeze({
     name: "default",
     bounds: Object.freeze({ minX: -128, maxX: 128, minY: -64, maxY: 320, minZ: -128, maxZ: 128, spawnY: -60 }),
+    lobbySpawn: Object.freeze({ x: 0, y: -60, z: 0 }),
+    aircraft: Object.freeze({
+      seats: Object.freeze([{ x: 0, y: -58, z: 0 }, { x: 1, y: -58, z: 0 }, { x: -1, y: -58, z: 0 }, { x: 0, y: -58, z: 1 }]),
+      floorCenter: Object.freeze({ x: 0, y: -59, z: 0 }),
+      countdownSeconds: 10,
+      maxDropSeconds: 90,
+    }),
+    tickingAreas: Object.freeze([]),
+    supplies: Object.freeze([{ x: 0, y: -59, z: 40 }]),
+    chestCount: 12,
+    groundItemCount: 12,
+    supplyCount: 3,
   }),
   zone: Object.freeze({
     warningSeconds: 150,
@@ -38,6 +50,7 @@ export const STAGE_CONFIG = Object.freeze({
   supplies: Object.freeze([
     Object.freeze({ x: 0, y: -59, z: 40 }),
   ]),
+  supplySpawnStages: Object.freeze([1, 3, 5]),
   tickingAreas: Object.freeze([
     Object.freeze({ name: "tbr_stage_1", dimensionId: "overworld", from: Object.freeze({ x: -128, y: -64, z: -128 }), to: Object.freeze({ x: 0, y: 320, z: 0 }) }),
     Object.freeze({ name: "tbr_stage_2", dimensionId: "overworld", from: Object.freeze({ x: 1, y: -64, z: -128 }), to: Object.freeze({ x: 128, y: 320, z: 0 }) }),

@@ -1,44 +1,41 @@
 import { ok, fail } from "../core/Constants.js";
 
-// Incremental, cached candidate scanner. It deliberately samples the registered
-// map volume in small batches so a large map never monopolizes one tick.
+export const SCANNER_VERSION = 5;
+const NOT_GROUND = ["air", "water", "lava", "fire", "leaves", "bubble_column", "powder_snow", "web", "barrier", "structure_void", "light_block"];
+const isUnloadedError = error => { const text = `${error?.name ?? ""} ${error?.message ?? ""}`.toLowerCase(); return text.includes("unloaded") || text.includes("not loaded") || text.includes("outofworld"); };
+
 export class MapScanner {
-  constructor({ world, scheduler, storage, mapManager, batchSize = 256 } = {}) {
-    this.world = world; this.scheduler = scheduler; this.storage = storage; this.mapManager = mapManager; this.batchSize = batchSize;
-    this.status = { state: "WAITING", scanned: 0, total: 0, candidates: 0, valid: 0, failedRegions: [] }; this.candidates = [];
-    this.task = null;
-  }
-  cacheKey() { return `tbr:map_candidates:${this.mapManager.getMap()?.name ?? "default"}`; }
-  getStatus() { return { ...this.status, candidates: this.candidates.length, valid: this.candidates.filter(c => c.valid).length }; }
-  getCandidates() { return this.candidates.filter(c => c.valid).map(c => ({ ...c })); }
-  isReady() { return this.status.state === "COMPLETE"; }
-  loadCache() { const saved = this.storage?.get?.(this.cacheKey()); if (!saved?.schemaVersion || !Array.isArray(saved.candidates)) return false; this.candidates = saved.candidates; this.status = { ...this.status, state: "COMPLETE", scanned: saved.scanned ?? 0, total: saved.total ?? 0 }; return true; }
-  start(force = false) {
-    if (!force && this.loadCache()) return ok(this.getStatus());
-    const b = this.mapManager.getMapBounds(); if (!b) return fail("INVALID_MAP", "map bounds are required");
-    this.stop(); this.candidates = []; this.status = { state: "SCANNING", scanned: 0, total: Math.max(0, (b.maxX - b.minX + 1) * (b.maxZ - b.minZ + 1)), candidates: 0, valid: 0, failedRegions: [] };
-    this.cursor = { x: b.minX, z: b.minZ }; this.bounds = b;
-    if (this.scheduler?.runInterval) this.task = this.scheduler.runInterval(() => this.tick(), 1); else this.tick();
-    return ok(this.getStatus());
-  }
-  stop() { if (this.task !== null) this.scheduler?.clearRun?.(this.task); this.task = null; }
-  tick() {
-    if (this.status.state !== "SCANNING") return;
-    const dimension = this.world?.getDimension?.(this.mapManager.getMap()?.dimensionId ?? "overworld"); let processed = 0;
-    while (processed++ < this.batchSize && this.cursor.z <= this.bounds.maxZ) {
-      const x = this.cursor.x; const z = this.cursor.z; this.cursor.x += 1; if (this.cursor.x > this.bounds.maxX) { this.cursor.x = this.bounds.minX; this.cursor.z += 1; }
-      try {
-        const y = this.findSurfaceY(dimension, x, z); if (y !== null) { const candidate = this.inspect(dimension, x, y, z); if (candidate) this.candidates.push(candidate); }
-      } catch (_) { this.status.failedRegions.push({ x, z }); }
-      this.status.scanned += 1;
-    }
-    if (this.cursor.z > this.bounds.maxZ) { this.status.state = "COMPLETE"; this.stop(); this.storage?.set?.(this.cacheKey(), { schemaVersion: 1, scanned: this.status.scanned, total: this.status.total, candidates: this.candidates }); }
-  }
+  constructor({ world, scheduler, storage, mapManager, batchSize = 256 } = {}) { this.world = world; this.scheduler = scheduler; this.storage = storage; this.mapManager = mapManager; this.batchSize = batchSize; this.task = null; this.bounds = null; this.reset(); }
+  cacheKey() { return `tbr:map_candidates:${this.mapManager.getMap()?.mapId ?? this.mapManager.getMap()?.name ?? "default"}`; }
+  boundsFingerprint(bounds = this.mapManager.getMapBounds()) { return bounds ? [bounds.minX, bounds.maxX, bounds.minY, bounds.maxY, bounds.minZ, bounds.maxZ].join(",") : "none"; }
+  reset() { this.candidates = []; this.failedRegions = []; this.cursor = null; this.status = { state: "WAITING", scanned: 0, total: 0, candidates: 0, valid: 0, failedRegions: [] }; this.stats = { scanned: 0, valid: 0, failed: 0, unloaded: 0, topmostOk: 0, topmostUsed: 0, fallbackUsed: 0, undefinedBlocks: 0, solidFound: 0, twoAirFound: 0 }; this.debug = { firstBlock: null, topmostSamples: [] }; }
+  getStatus() { return { ...this.status, candidates: this.candidates.length, valid: this.candidates.filter(candidate => candidate.valid).length, scannerVersion: SCANNER_VERSION, stats: { ...this.stats }, failedRegions: this.failedRegions.slice(0, 10), debug: { ...this.debug } }; }
+  getCandidates() { return this.candidates.filter(candidate => candidate.valid).map(candidate => ({ ...candidate })); }
+  hasCandidates() { return this.isReady() && this.candidates.length > 0; }
+  isReady() { return this.status.state === "COMPLETE" && this.candidates.length > 0; }
+  isAir(block) { return !!block && (block.isAir === true || ["minecraft:air", "minecraft:cave_air", "minecraft:void_air"].includes(block.typeId)); }
+  isSolid(block) { if (!block) return false; const typeId = block.typeId ?? ""; if (NOT_GROUND.some(part => typeId.includes(part))) return false; if (block.isLiquid === true || block.isAir === true) return false; return typeof block.isSolid === "boolean" ? block.isSolid : true; }
+  getBlockSafe(dimension, x, y, z) { try { const block = dimension?.getBlock?.({ x, y, z }); if (!block) { this.stats.undefinedBlocks += 1; return { block: undefined, unloaded: true }; } if (!this.debug.firstBlock) this.debug.firstBlock = { typeId: block.typeId, y: block.location?.y, x, z }; return { block, unloaded: false }; } catch (error) { if (isUnloadedError(error)) { this.stats.undefinedBlocks += 1; return { block: undefined, unloaded: true }; } throw error; } }
+  recordFailure(x, z, stage, error) { this.stats.failed += 1; if (this.failedRegions.length < 200) this.failedRegions.push({ x, z, stage, reason: `${error?.name ?? "Error"}: ${error?.message ?? error}` }); this.status.failedRegions = this.failedRegions.slice(0, 10); }
   findSurfaceY(dimension, x, z) {
-    const minY = this.bounds.minY ?? this.bounds.spawnY ?? -64; const maxY = this.bounds.maxY ?? (this.bounds.spawnY ?? 320); for (let y = maxY; y >= minY; y--) { const floor = dimension?.getBlock?.({ x, y, z }); const above = dimension?.getBlock?.({ x, y: y + 1, z }); if (floor && above && this.isSolid(floor) && this.isAir(above)) return y; } return null;
+    const bounds = this.bounds;
+    try {
+      const top = dimension?.getTopmostBlock?.({ x, z }); const topY = top?.location?.y;
+      if (this.debug.topmostSamples.length < 5) this.debug.topmostSamples.push({ x, z, typeId: top?.typeId, y: topY });
+      if (top && Number.isInteger(topY) && topY >= bounds.minY && topY <= bounds.maxY) { this.stats.topmostOk += 1; if (this.isSolid(top)) { const above = this.getBlockSafe(dimension, x, topY + 1, z); if (!above.unloaded && this.isAir(above.block)) { this.stats.topmostUsed += 1; return { y: topY }; } } }
+    } catch (error) { if (isUnloadedError(error)) return { unloaded: true }; this.recordFailure(x, z, "getTopmostBlock", error); }
+    let sawLoaded = false;
+    for (let y = bounds.maxY; y >= bounds.minY; y -= 1) { const floor = this.getBlockSafe(dimension, x, y, z); if (floor.unloaded) { if (!sawLoaded) return { unloaded: true }; continue; } sawLoaded = true; if (!this.isSolid(floor.block)) continue; const above = this.getBlockSafe(dimension, x, y + 1, z); if (!above.unloaded && this.isAir(above.block)) { this.stats.fallbackUsed += 1; return { y }; } }
+    return { none: true };
   }
-  isAir(block) { return !block || ["minecraft:air", "minecraft:cave_air", "minecraft:void_air"].includes(block.typeId); }
-  isSolid(block) { return !!block && !this.isAir(block) && !["minecraft:water", "minecraft:flowing_water", "minecraft:lava", "minecraft:flowing_lava", "minecraft:fire", "minecraft:soul_fire"].includes(block.typeId); }
-  inspect(dimension, x, y, z) { const first = dimension?.getBlock?.({ x, y: y + 1, z }); const second = dimension?.getBlock?.({ x, y: y + 2, z }); if (!this.isAir(first) || !this.isAir(second)) return null; return { x, y: y + 1, z, floorBlock: dimension?.getBlock?.({ x, y, z })?.typeId ?? "unknown", valid: true, failedCount: 0 }; }
+  inspect(dimension, x, y, z) { this.stats.solidFound += 1; const first = this.getBlockSafe(dimension, x, y + 1, z); const second = this.getBlockSafe(dimension, x, y + 2, z); if (first.unloaded || second.unloaded || !this.isAir(first.block) || !this.isAir(second.block)) return null; this.stats.twoAirFound += 1; return { x, y: y + 1, z, floorBlock: dimension?.getBlock?.({ x, y, z })?.typeId ?? "unknown", valid: true, failedCount: 0 }; }
+  scanColumn(dimension, x, z) { this.stats.scanned += 1; try { const result = this.findSurfaceY(dimension, x, z); if (result.unloaded) { this.stats.unloaded += 1; return; } if (result.none) return; const candidate = this.inspect(dimension, x, result.y, z); if (candidate) { this.candidates.push(candidate); this.stats.valid += 1; } } catch (error) { this.recordFailure(x, z, "scanColumn", error); } }
+  loadCache() { const saved = this.storage?.get?.(this.cacheKey()); if (saved?.scannerVersion !== SCANNER_VERSION || saved.boundsFingerprint !== this.boundsFingerprint() || !Array.isArray(saved.candidates) || saved.candidates.length === 0) return false; this.candidates = saved.candidates; this.status = { ...this.status, state: "COMPLETE", scanned: saved.scanned ?? 0, total: saved.total ?? 0 }; this.stats.valid = this.candidates.length; return true; }
+  start(force = false) { if (!force && this.loadCache()) return ok(this.getStatus()); const bounds = this.mapManager.getMapBounds(); if (!bounds) return fail("INVALID_MAP", "map bounds are required"); this.stop(); this.reset(); this.bounds = { ...bounds }; this.status = { ...this.status, state: "SCANNING", total: Math.max(0, (bounds.maxX - bounds.minX + 1) * (bounds.maxZ - bounds.minZ + 1)) }; this.cursor = { x: bounds.minX, z: bounds.minZ }; if (this.scheduler?.runInterval) this.task = this.scheduler.runInterval(() => this.tick(), 1); else this.tick(); return ok(this.getStatus()); }
+  stop() { if (this.task !== null) this.scheduler?.clearRun?.(this.task); this.task = null; }
+  tick() { if (this.status.state !== "SCANNING") return; const dimension = this.world?.getDimension?.(this.mapManager.getMap()?.dimensionId ?? "overworld"); let processed = 0; while (processed++ < this.batchSize && this.cursor.z <= this.bounds.maxZ) { const { x, z } = this.cursor; this.cursor.x += 1; if (this.cursor.x > this.bounds.maxX) { this.cursor.x = this.bounds.minX; this.cursor.z += 1; } this.scanColumn(dimension, x, z); this.status.scanned = this.stats.scanned; } if (this.cursor.z > this.bounds.maxZ) { this.status.state = "COMPLETE"; this.stop(); if (this.candidates.length > 0) this.storage?.set?.(this.cacheKey(), { scannerVersion: SCANNER_VERSION, boundsFingerprint: this.boundsFingerprint(this.bounds), scanned: this.status.scanned, total: this.status.total, candidates: this.candidates }); } }
+  buildCacheRecord() { return this.candidates.length === 0 ? null : { scannerVersion: SCANNER_VERSION, boundsFingerprint: this.boundsFingerprint(this.bounds), candidates: this.candidates }; }
+  isCacheValid(cache) { return !!cache && cache.scannerVersion === SCANNER_VERSION && cache.boundsFingerprint === this.boundsFingerprint() && Array.isArray(cache.candidates) && cache.candidates.length > 0; }
+  getReport() { const s = this.stats; const d = this.debug; const lines = [`scan=${this.status.state === "COMPLETE" ? "COMPLETE" : "RUNNING"} ${this.status.scanned}/${this.status.total} (v${SCANNER_VERSION})`, `scanned=${s.scanned} valid=${s.valid} failed=${s.failed} unloaded=${s.unloaded}`, `firstBlock=${d.firstBlock ? `${d.firstBlock.typeId} y=${d.firstBlock.y}` : "none"}`, `topmost samples=${JSON.stringify(d.topmostSamples)}`, `topmostOk=${s.topmostOk} topmostUsed=${s.topmostUsed} fallbackUsed=${s.fallbackUsed}`, `getBlock undefined=${s.undefinedBlocks}`, `solid=${s.solidFound} twoAir=${s.twoAirFound} candidates=${this.candidates.length}`]; this.failedRegions.slice(0, 10).forEach((failure, index) => lines.push(`failed[${index}] (${failure.x},${failure.z}) ${failure.stage}: ${failure.reason}`)); return lines.join("\n"); }
   rescan() { return this.start(true); }
 }

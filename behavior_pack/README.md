@@ -70,8 +70,16 @@ Custom Command API の仕様により namespace が必要です。`/tbr start` �
 - Lobby で `/tbr:stop`: 試合なしとして失敗。
 - OP 以外が管理コマンドを実行: 権限で拒否。
 
-## 現時点の制限
+## 実装・検証状況
 
-- `/tbr start` の空白区切り形式は Custom Command API の namespace 制約により未対応。
-- 安全地帯、補給物資、Scoreboard、Locator Bar、切断時アイテム譲渡は次の実装段階。
-- `stageConfig.js` のサンプル座標は実際のワールドに合わせて変更する必要がある。
+実装済みの主要機能は、試合管理、チーム編成、戦闘判定、Zone縮小、通常物資、段階サプライ、Scoreboard/Actionbar、ログ、Dynamic Properties分割保存、切断時インベントリ譲渡、MapManagerの複数マップ管理です。
+
+リポジトリ内では `npm test` で純粋ロジックの自動テストを実行できます。Minecraft実機でのみ確認できる以下は、まだ実機確認待ちです。
+
+- Script API 2.12.0-beta上の全イベント購読
+- 実ワールドでの地形スキャンと物資配置
+- サプライ開封・Zone外削除・再起動復旧
+- Ticking Area、エリトラ降下、Locator Bar
+- 3〜32人のSolo/Team統合試験
+
+`stageConfig.js` の座標とマップ範囲は、実際のワールドに合わせて変更してください。
