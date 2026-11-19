@@ -17,7 +17,7 @@ const applyConfig = changes => {
   return { status: result.ok ? CustomCommandStatus.Success : CustomCommandStatus.Failure, message: result.ok ? "TBR: 設定を変更しました" : `TBR: ${result.error.message}` };
 };
 const configMessage = () => `設定: mode=${app.configManager.getConfigValue("mode")}, teamCount=${app.configManager.getConfigValue("teamCount") ?? "なし"}, friendlyFire=${app.configManager.getConfigValue("friendlyFire") ? "on" : "off"}, countdown=${app.configManager.getConfigValue("countdownSeconds")}秒, map=${app.configManager.getConfigValue("mapName")}`;
-const resolvePlayerId = value => app.playerManager.getStatus().find(p => p.id === String(value) || p.name === String(value))?.id ?? String(value);
+const resolvePlayerId = value => { const id = value?.id ?? value?.name ?? value; return app.playerManager.getStatus().find(p => p.id === String(id) || p.name === String(id))?.id ?? String(id); };
 const playerStateLabel = state => ({ WAITING: "待機", ALIVE: "生存", ELIMINATED: "脱落", DISCONNECTED: "切断", SPECTATOR: "観戦" }[state] ?? state);
 const titleStyle = Object.freeze({
   start: "§r§aGAME START",
@@ -46,12 +46,12 @@ system.beforeEvents.startup.subscribe(({ customCommandRegistry }) => {
     });
     return { status: CustomCommandStatus.Success, message: "TBR: 試合停止を要求しました" };
   });
-  customCommandRegistry.registerCommand({ name: "tbr:eliminate", description: "プレイヤーを強制脱落させる", permissionLevel: CommandPermissionLevel.GameDirectors, cheatsRequired: false, mandatoryParameters: [{ type: CustomCommandParamType.String, name: "player" }], optionalParameters: [{ type: CustomCommandParamType.String, name: "reason" }] }, (_origin, playerId, reason) => {
+  customCommandRegistry.registerCommand({ name: "tbr:eliminate", description: "プレイヤーを強制脱落させる", permissionLevel: CommandPermissionLevel.GameDirectors, cheatsRequired: false, mandatoryParameters: [{ type: CustomCommandParamType.Player, name: "player" }], optionalParameters: [{ type: CustomCommandParamType.String, name: "reason" }] }, (_origin, playerId, reason) => {
     const targetId = resolvePlayerId(playerId); const result = app.matchManager.eliminateByAdmin(targetId, String(reason ?? "admin"));
     if (result.ok) app.logManager.record("ADMIN_COMMAND", { command: "eliminate", playerId: targetId, reason: String(reason ?? "admin") });
     return { status: result.ok ? CustomCommandStatus.Success : CustomCommandStatus.Failure, message: result.ok ? "TBR: プレイヤーを強制脱落させました" : `TBR: ${result.error.message}` };
   });
-  customCommandRegistry.registerCommand({ name: "tbr:revive", description: "脱落プレイヤーを復活させる", permissionLevel: CommandPermissionLevel.GameDirectors, cheatsRequired: false, mandatoryParameters: [{ type: CustomCommandParamType.String, name: "player" }] }, (_origin, playerId) => {
+  customCommandRegistry.registerCommand({ name: "tbr:revive", description: "脱落プレイヤーを復活させる", permissionLevel: CommandPermissionLevel.GameDirectors, cheatsRequired: false, mandatoryParameters: [{ type: CustomCommandParamType.Player, name: "player" }] }, (_origin, playerId) => {
     const targetId = resolvePlayerId(playerId); const result = app.matchManager.reviveByAdmin(targetId);
     if (result.ok) app.logManager.record("ADMIN_COMMAND", { command: "revive", playerId: targetId });
     return { status: result.ok ? CustomCommandStatus.Success : CustomCommandStatus.Failure, message: result.ok ? "TBR: プレイヤーを復活させました" : `TBR: ${result.error.message}` };
@@ -97,7 +97,7 @@ system.beforeEvents.startup.subscribe(({ customCommandRegistry }) => {
   });
   registerCommand(customCommandRegistry, "tbr:help", "TBRコマンドの使い方を日本語で表示する", () => ({
     status: CustomCommandStatus.Success,
-    message: "TBRヘルプ: /tbr:start 開始 /tbr:stop 停止 /tbr:status 状態 /tbr:config 設定表示・変更 /tbr:config_reset 設定初期化 /tbr:map_list マップ一覧 /tbr:map_select マップ指定 /tbr:preset_save 名前 保存 /tbr:preset_load 名前 読込 /tbr:preset_list 一覧 /tbr:preset_delete 名前 削除 /tbr:players プレイヤー /tbr:teams チーム /tbr:zone 安全地帯 /tbr:team_setup 編成 /tbr:team_random 再編成 /tbr:team_assign プレイヤー チーム /tbr:log_export ログ出力 /tbr:log_clear 消去 /tbr:log_repair 修復",
+    message: "§6[TBR] コマンド一覧\n§e試合\n  §f/tbr:start §7試合開始\n  §f/tbr:stop §7試合停止（確認が必要）\n  §f/tbr:status §7試合状態\n\n§e設定・マップ\n  §f/tbr:config §7設定表示・変更\n  §f/tbr:config_reset §7設定初期化\n  §f/tbr:map_list §7マップ一覧\n  §f/tbr:map_select <mapId> §7マップ選択\n  §f/tbr:scan §7候補地点を再スキャン\n\n§eプレイヤー・チーム\n  §f/tbr:players §7プレイヤー状態\n  §f/tbr:teams §7チーム状態\n  §f/tbr:team_setup §7チーム作成\n  §f/tbr:team_random §7ランダム編成\n  §f/tbr:team_assign <player> <team> §7編成\n  §f/tbr:eliminate <player> [reason] §7強制脱落\n  §f/tbr:revive <player> §7強制復活\n\n§e確認・デバッグ\n  §f/tbr:debug §7内部診断\n  §f/tbr:zone §7Zone状態\n  §f/tbr:supply §7サプライ即時出現\n  §f/tbr:history §7試合履歴\n\n§eログ\n  §f/tbr:log_export §7ログ出力\n  §f/tbr:log_clear §7ログ消去\n  §f/tbr:log_repair §7ログ修復",
   }));
   customCommandRegistry.registerCommand({
     name: "tbr:config",
@@ -152,6 +152,12 @@ system.beforeEvents.startup.subscribe(({ customCommandRegistry }) => {
     status: CustomCommandStatus.Success,
     message: (() => { const scan = app.mapScanner.getStatus(); const stats = scan.stats ?? {}; return `診断: match=${app.matchManager.getState()} players=${app.playerManager.getStatus().length} teams=${app.teamManager.getTeams().length} zone=${app.zoneManager.getZoneStatus().phase} map=${getActiveMap().name} height=${getActiveMap().bounds.spawnY} scan=${scan.state} ${scan.scanned}/${scan.total} candidates=${scan.valid} unloaded=${stats.unloaded ?? 0} failed=${stats.failed ?? 0} first=${scan.debug?.firstBlock?.typeId ?? "none"} loot=${JSON.stringify(app.itemManager.getPlacementStatus())}`; })(),
   }));
+  registerCommand(customCommandRegistry, "tbr:supply", "サプライを即時出現させるデバッグコマンド", () => {
+    if (!["DROPPING", "IN_PROGRESS"].includes(app.matchManager.getState())) return { status: CustomCommandStatus.Failure, message: "TBR: 試合中のみサプライを出現できます" };
+    const stage = Math.max(-1, ...supplyStagesSpawned) + 1;
+    const spawned = spawnSupplyStage(stage, true);
+    return { status: spawned ? CustomCommandStatus.Success : CustomCommandStatus.Failure, message: spawned ? "TBR: サプライを即時出現させました" : "TBR: サプライを出現できませんでした（上限または候補地点不足）" };
+  });
   registerCommand(customCommandRegistry, "tbr:scan", "物資配置候補を再スキャンする", () => {
     queueMapScan(true);
     return { status: CustomCommandStatus.Success, message: "TBR: Ticking Area準備後にマップスキャンを開始します" };
@@ -170,7 +176,7 @@ system.beforeEvents.startup.subscribe(({ customCommandRegistry }) => {
     const assigned = app.teamManager.randomAssign(ids);
     return { status: assigned.ok ? CustomCommandStatus.Success : CustomCommandStatus.Failure, message: assigned.ok ? "TBR: チームを作成してランダム編成しました" : `TBR: ${assigned.error.message}` };
   });
-  customCommandRegistry.registerCommand({ name: "tbr:team_assign", description: "プレイヤーを指定チームへ編成する", permissionLevel: CommandPermissionLevel.GameDirectors, cheatsRequired: false, mandatoryParameters: [{ type: CustomCommandParamType.String, name: "player" }, { type: CustomCommandParamType.String, name: "team" }] }, (_origin, playerId, teamId) => { if (app.matchManager.getState() !== "LOBBY") return { status: CustomCommandStatus.Failure, message: "TBR: チーム編成はLobby中のみ可能です" }; const targetId = resolvePlayerId(playerId); const target = app.playerManager.getPlayer(targetId); if (!target || target.state !== "WAITING") return { status: CustomCommandStatus.Failure, message: "TBR: 待機中の登録プレイヤーを指定してください" }; const result = app.teamManager.assignPlayer(targetId, String(teamId)); return { status: result.ok ? CustomCommandStatus.Success : CustomCommandStatus.Failure, message: result.ok ? "TBR: プレイヤーをチームへ編成しました" : `TBR: ${result.error.message}` }; });
+  customCommandRegistry.registerCommand({ name: "tbr:team_assign", description: "プレイヤーを指定チームへ編成する", permissionLevel: CommandPermissionLevel.GameDirectors, cheatsRequired: false, mandatoryParameters: [{ type: CustomCommandParamType.Player, name: "player" }, { type: CustomCommandParamType.String, name: "team" }] }, (_origin, playerId, teamId) => { if (app.matchManager.getState() !== "LOBBY") return { status: CustomCommandStatus.Failure, message: "TBR: チーム編成はLobby中のみ可能です" }; const targetId = resolvePlayerId(playerId); const target = app.playerManager.getPlayer(targetId); if (!target || target.state !== "WAITING") return { status: CustomCommandStatus.Failure, message: "TBR: 待機中の登録プレイヤーを指定してください" }; const result = app.teamManager.assignPlayer(targetId, String(teamId)); return { status: result.ok ? CustomCommandStatus.Success : CustomCommandStatus.Failure, message: result.ok ? "TBR: プレイヤーをチームへ編成しました" : `TBR: ${result.error.message}` }; });
   registerCommand(customCommandRegistry, "tbr:log_export", "保存済みログをエクスポートする", () => {
     const result = app.logManager.export();
     return { status: result.ok === false ? CustomCommandStatus.Failure : CustomCommandStatus.Success, message: result.ok === false ? `TBR: ${result.error.message}` : "TBR: ログをエクスポートしました" };
@@ -185,7 +191,7 @@ system.beforeEvents.startup.subscribe(({ customCommandRegistry }) => {
   });
   registerCommand(customCommandRegistry, "tbr:commands", "TBRコマンド一覧を表示する", () => ({
     status: CustomCommandStatus.Success,
-    message: "/tbr:help ヘルプ /tbr:start 開始 /tbr:stop 停止 /tbr:status 状態 /tbr:config 設定表示・変更 /tbr:preset_save 保存 /tbr:preset_load 読込 /tbr:preset_list 一覧 /tbr:preset_delete 削除 /tbr:players プレイヤー /tbr:teams チーム /tbr:zone 安全地帯 /tbr:debug 診断 /tbr:team_setup チーム作成 /tbr:team_random 再編成 /tbr:log_export ログ出力 /tbr:log_clear 消去 /tbr:log_repair 修復",
+    message: "詳しい一覧は /tbr:help を実行してください。",
   }));
 });
 
@@ -258,7 +264,8 @@ const distributeLootPositions = (positions, count) => { if (count <= 0 || !posit
 const retryPlacement = place => { let result = null; for (let attempt = 0; attempt < 3; attempt++) { result = place(); if (result?.ok) return result; } return result ?? { ok: false }; };
 const spawnMatchLoot = () => { const map = getActiveMap(); const chestCount = Math.max(0, Number(map.chestCount ?? 12)); const groundCount = Math.max(0, Number(map.groundItemCount ?? 12)); const total = chestCount + groundCount; const positions = distributeLootPositions(getLootPositions(), total); app.itemManager.beginPlacement(total); let placed = 0; positions.forEach((position, index) => { const loot = app.itemManager.generateLoot(lootTables.common, 1 + (index % 3)).data; const isChest = index < chestCount; const result = retryPlacement(() => isChest ? app.itemManager.spawnChest(getDimension(), position, loot, "chest") : app.itemManager.spawnGroundItem(getDimension(), { x: position.x + 0.5, y: position.y + 0.15, z: position.z + 0.5 }, loot[0])); app.itemManager.recordPlacement(result.ok); if (result.ok) placed += 1; }); app.itemManager.finishPlacement(); return placed; };
 const spawnSupplySmoke = (position, key) => { if (supplySmokeCleared.has(key)) return; try { getDimension().spawnParticle("minecraft:basic_smoke_particle", { x: position.x + 0.5, y: position.y + 1, z: position.z + 0.5 }); } catch (_) {} };
-const spawnSupplyStage = stage => { const supplyLimit = Math.max(0, Number(getActiveMap().supplyCount ?? 3)); if (supplyStagesSpawned.has(stage) || supplyStagesSpawned.size >= supplyLimit) return 0; const supplyLocations = getActiveMap().supplies ?? STAGE_CONFIG.supplies; const configured = supplyLocations?.[stage % Math.max(1, supplyLocations.length)]; const candidates = getLootPositions().filter(position => !app.zoneManager.isInside(position)); const position = configured ?? candidates[0] ?? getLootPositions()[stage % Math.max(1, getLootPositions().length)]; if (!position) return 0; const loot = app.itemManager.generateLoot(lootTables.supply, 3).data; const result = retryPlacement(() => app.itemManager.spawnChest(getDimension(), position, loot, "supply", "minecraft:shulker_box")); if (!result.ok) return 0; supplyStagesSpawned.add(stage); spawnSupplySmoke(position, `${position.x}:${position.y}:${position.z}`); return 1; };
+const announceSupply = position => { world.sendMessage(`§r§6[TBR] サプライが出現しました §f(${position.x}, ${position.y}, ${position.z})`); for (const player of world.getPlayers()) { try { if (typeof player.playSound === "function") player.playSound("random.levelup"); else player.runCommandAsync?.("playsound random.levelup @s ~ ~ ~ 1 1"); } catch (_) {} } };
+const spawnSupplyStage = (stage, debug = false) => { const supplyLimit = Math.max(0, Number(getActiveMap().supplyCount ?? 3)); if (supplyStagesSpawned.has(stage) || supplyStagesSpawned.size >= supplyLimit) return 0; const supplyLocations = getActiveMap().supplies ?? STAGE_CONFIG.supplies; const configured = supplyLocations?.[stage % Math.max(1, supplyLocations.length)]; const allCandidates = getLootPositions(); const candidates = debug ? allCandidates : allCandidates.filter(position => !app.zoneManager.isInside(position)); const position = debug ? candidates[stage % Math.max(1, candidates.length)] : (configured ?? candidates[0] ?? allCandidates[stage % Math.max(1, allCandidates.length)]); if (!position) return 0; const loot = app.itemManager.generateLoot(lootTables.supply, 3).data; const result = retryPlacement(() => app.itemManager.spawnChest(getDimension(), position, loot, "supply", "minecraft:shulker_box")); if (!result.ok) return 0; supplyStagesSpawned.add(stage); spawnSupplySmoke(position, `${position.x}:${position.y}:${position.z}`); announceSupply(position); return 1; };
 const clearScoreboard = objective => {
   for (const participant of objective.getParticipants?.() ?? []) {
     try { objective.removeParticipant(participant); } catch (_) { /* stale scoreboard entry */ }
