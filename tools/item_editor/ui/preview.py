@@ -13,4 +13,3 @@ def unified_diff(relative_path: str, old_content: str | bytes | None, new_conten
 
     result = "".join(difflib.unified_diff(lines(old_content), lines(new_content), fromfile=relative_path, tofile=relative_path))
     return result or "差分なし"
-
