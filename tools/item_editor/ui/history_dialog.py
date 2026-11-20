@@ -11,7 +11,11 @@ def open_history_dialog(parent, tk, ttk, entries, on_restore):
     listbox = tk.Listbox(dialog)
     listbox.pack(fill="both", expand=True, padx=10, pady=10)
     for entry in entries:
-        listbox.insert("end", f"{entry['name']} ({entry['files']} files)")
+        additions = " ".join(f"+ {key}" for key in entry.get("added", []))
+        removals = " ".join(f"- {key}" for key in entry.get("removed", []))
+        difference = " ".join(value for value in (additions, removals) if value)
+        suffix = f" / {difference}" if difference else ""
+        listbox.insert("end", f"{entry['name']} (items {entry.get('items', 0)}件 / ファイル {entry['files']}個{suffix})")
     ttk.Button(dialog, text="選択した履歴を復元", command=lambda: on_restore(dialog, listbox)).pack(pady=(0, 10))
     return dialog
 

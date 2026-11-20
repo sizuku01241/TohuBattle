@@ -87,14 +87,31 @@ def history_entries(root: Path) -> list[dict[str, object]]:
     base = root / "tools" / "items" / "history"
     result = []
     for path in sorted((p for p in base.iterdir() if p.is_dir()), reverse=True) if base.exists() else []:
-        manifest = path / "manifest.json"
-        files = 0
-        if manifest.exists():
+        files = len([p for p in path.rglob("*") if p.is_file() and p.name != "manifest.json"])
+        snapshot = path / "tools" / "items" / "items.json"
+        if not snapshot.exists():
+            snapshot = path / "items.json"
+        item_keys = []
+        if snapshot.exists():
             try:
-                files = len(json.loads(manifest.read_text(encoding="utf-8")))
-            except (OSError, json.JSONDecodeError):
-                files = len([p for p in path.rglob("*") if p.is_file() and p.name != "manifest.json"])
-        result.append({"name": path.name, "path": path, "files": files})
+                item_keys = [str(item.get("key", "")) for item in json.loads(snapshot.read_text(encoding="utf-8")).get("items", [])]
+            except (OSError, json.JSONDecodeError, AttributeError):
+                item_keys = []
+        current_path = root / "tools" / "items" / "items.json"
+        current_keys = []
+        if current_path.exists():
+            try:
+                current_keys = [str(item.get("key", "")) for item in json.loads(current_path.read_text(encoding="utf-8")).get("items", [])]
+            except (OSError, json.JSONDecodeError, AttributeError):
+                current_keys = []
+        result.append({
+            "name": path.name,
+            "path": path,
+            "files": files,
+            "items": len(item_keys),
+            "added": [key for key in item_keys if key not in current_keys][:5],
+            "removed": [key for key in current_keys if key not in item_keys][:5],
+        })
     return result
 
 
@@ -107,7 +124,11 @@ def restore_history(root: Path, history_path: Path) -> list[str]:
     for source in history_path.rglob("*"):
         if not source.is_file() or source.name == "manifest.json":
             continue
-        target = root / source.relative_to(history_path)
+        relative = source.relative_to(history_path)
+        if relative == Path("items.json"):
+            target = root / "tools" / "items" / "items.json"
+        else:
+            target = root / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
         restored.append(target.relative_to(root).as_posix())

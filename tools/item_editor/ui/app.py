@@ -344,7 +344,16 @@ def launch_gui(root: Path) -> None:
                 return
             if not save():
                 return
-            restore_history(root, entries[selected_index[0]]["path"]); editor_state.replace_items(load_items(root), dirty=False); load_item(editor_state.selected) if editor_state.selected else None; refresh(); status.set("履歴を復元して画面を更新しました"); dialog.destroy()
+            try:
+                restore_history(root, entries[selected_index[0]]["path"])
+                restored_items = load_items(root)
+                editor_state.replace_items(restored_items, dirty=False)
+                load_item(editor_state.selected) if editor_state.selected else None
+                refresh()
+                status.set(f"履歴を復元しました（items {len(restored_items)}件）")
+                dialog.destroy()
+            except Exception as error:
+                messagebox.showerror("履歴復元エラー", str(error))
         open_history_dialog(window, tk, ttk, entries, restore_selected)
     def delete_item():
         if not editor_state.selected or not messagebox.askyesno("削除確認", "items.jsonから削除しますか？"):

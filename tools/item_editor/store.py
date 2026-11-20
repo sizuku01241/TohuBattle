@@ -52,7 +52,7 @@ def save_items(root: Path, items: list[Item]) -> Path:
     path = items_path(root)
     if path.exists():
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S") + f"-{time.time_ns() % 1000000:06d}"
-        backup = root / "tools" / "items" / "history" / stamp / "items.json"
+        backup = root / "tools" / "items" / "history" / stamp / "tools" / "items" / "items.json"
         backup.parent.mkdir(parents=True, exist_ok=True)
         backup.write_bytes(path.read_bytes())
     payload = {"schema_version": 1, "items": [item_to_dict(item) for item in items]}

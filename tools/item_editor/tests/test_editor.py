@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,8 +9,8 @@ from tools.item_editor.importer import import_loot
 from tools.item_editor.models import Item, LootEntry, item_to_dict
 from tools.item_editor.validators import validate
 from tools.item_editor.writer import apply, plan
-from tools.item_editor.ui_logic import change_selection, loot_matrix, suggest_key, template_item
-from tools.item_editor.store import load_settings, save_items, save_settings
+from tools.item_editor.ui_logic import change_selection, history_entries, loot_matrix, restore_history, suggest_key, template_item
+from tools.item_editor.store import load_items, load_settings, save_items, save_settings
 from tools.item_editor.state import EditorState
 from tools.item_editor.form_logic import apply_form_to_item, parse_float, parse_int
 from tools.item_editor.ui.tab_basic import filter_vanilla_candidates
@@ -132,6 +133,62 @@ class ItemEditorTests(unittest.TestCase):
         result = change_selection(0, 1, lambda: None)
         self.assertTrue(result.changed)
         self.assertEqual(result.selected_index, 1)
+
+    def test_restore_history_old_format_targets_tools_items(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            history = root / "tools/items/history/old"
+            history.mkdir(parents=True)
+            payload = {"schema_version": 1, "items": [{"key": "arrow", "enabled": True, "kind": "vanilla", "id": "minecraft:arrow", "display_name": "矢"}]}
+            expected = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+            (history / "items.json").write_text(expected, encoding="utf-8")
+            restored = restore_history(root, history)
+            self.assertIn("tools/items/items.json", restored)
+            self.assertEqual((root / "tools/items/items.json").read_text(encoding="utf-8"), expected)
+            self.assertFalse((root / "items.json").exists())
+
+    def test_restore_history_new_format_and_save_delete_restore(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            original = [Item("bread", True, "vanilla", "minecraft:bread", "パン"), Item("arrow", True, "vanilla", "minecraft:arrow", "矢")]
+            save_items(root, original)
+            save_items(root, [original[0]])
+            history = next((root / "tools/items/history").iterdir())
+            restore_history(root, history)
+            self.assertEqual([item.key for item in load_items(root)], ["bread", "arrow"])
+            self.assertFalse((root / "items.json").exists())
+            new_history = root / "tools/items/history/new"
+            (new_history / "tools/items").mkdir(parents=True)
+            (new_history / "tools/items/items.json").write_text((root / "tools/items/items.json").read_text(encoding="utf-8"), encoding="utf-8")
+            (root / "tools/items/items.json").write_text('{"schema_version": 1, "items": []}\n', encoding="utf-8")
+            restore_history(root, new_history)
+            self.assertEqual([item.key for item in load_items(root)], ["bread", "arrow"])
+
+    def test_history_entries_reports_item_count_and_key_diff(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            save_items(root, [Item("bread", True, "vanilla", "minecraft:bread", "パン")])
+            history = root / "tools/items/history/diff"
+            history.mkdir(parents=True)
+            payload = {"schema_version": 1, "items": [item_to_dict(Item("arrow", True, "vanilla", "minecraft:arrow", "矢"))]}
+            (history / "items.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            entry = next(item for item in history_entries(root) if item["name"] == "diff")
+            self.assertEqual(entry["items"], 1)
+            self.assertIn("arrow", entry["added"])
+            self.assertIn("bread", entry["removed"])
+
+    def test_ten_item_history_restores_arrow_after_delete(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            original = [Item("minecraft_bread", True, "vanilla", "minecraft:bread", "パン"), Item("minecraft_arrow", True, "vanilla", "minecraft:arrow", "矢")]
+            original.extend(Item(f"item_{index}", True, "vanilla", "minecraft:stone", "") for index in range(8))
+            save_items(root, original)
+            save_items(root, [item for item in original if item.key != "minecraft_arrow"])
+            history = next((root / "tools/items/history").iterdir())
+            restore_history(root, history)
+            restored = load_items(root)
+            self.assertEqual(len(restored), 10)
+            self.assertIn("minecraft_arrow", [item.key for item in restored])
 
     def test_editor_logic_key_templates_and_matrix(self):
         existing = [Item("bread", True, "vanilla", "minecraft:bread", "パン")]
