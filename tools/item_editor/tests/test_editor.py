@@ -11,7 +11,7 @@ from tools.item_editor.writer import apply, plan
 from tools.item_editor.ui_logic import loot_matrix, suggest_key, template_item
 from tools.item_editor.store import load_settings, save_items, save_settings
 from tools.item_editor.state import EditorState
-from tools.item_editor.form_logic import apply_form_to_item
+from tools.item_editor.form_logic import apply_form_to_item, parse_float, parse_int
 from tools.item_editor.ui.tab_basic import filter_vanilla_candidates
 
 
@@ -95,6 +95,18 @@ class ItemEditorTests(unittest.TestCase):
     def test_vanilla_id_candidates_are_searchable(self):
         self.assertEqual(filter_vanilla_candidates(("minecraft:arrow", "minecraft:bread"), "bread"), ("minecraft:bread",))
         self.assertEqual(filter_vanilla_candidates(("minecraft:arrow",), "unknown"), ())
+
+    def test_invalid_numeric_form_names_the_field_and_does_not_mutate(self):
+        item = Item("one", True, "custom", "tbr:one", "one")
+        before = item_to_dict(item)
+        with self.assertRaisesRegex(ValueError, "使用時間"):
+            apply_form_to_item(item, {"kind": "custom", "food_enabled": True, "duration": "abc"}, [], [])
+        self.assertEqual(item_to_dict(item), before)
+
+    def test_zero_is_not_replaced_by_default(self):
+        self.assertEqual(parse_float("0", "半径", 3), 0)
+        self.assertEqual(parse_int("0", "効果レベル", 1), 0)
+        self.assertEqual(parse_float("", "半径", 3), 3)
 
     def test_editor_logic_key_templates_and_matrix(self):
         existing = [Item("bread", True, "vanilla", "minecraft:bread", "パン")]

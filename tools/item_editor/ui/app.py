@@ -3,18 +3,19 @@ from pathlib import Path
 
 from ..generators.loot_js import simulate_item_probability
 from ..models import CustomSpec, Item, LootEntry
-from ..form_logic import apply_form_to_item
+from ..form_logic import apply_form_to_item, parse_float, parse_int
 from ..store import load_items, load_settings, save_items, save_settings
 from ..state import EditorState
 from ..validators import STACK_LIMITS, TAGS, validate
 from ..writer import apply, plan
 from ..ui_logic import history_entries, loot_matrix, restore_history, suggest_key, template_item
-from .preview import unified_diff
+from .preview import build_preview_tab, unified_diff
 from .item_list import build_filter_header, build_item_tree
-from .tab_ability import EFFECT_VALUES, TARGET_VALUES
-from .tab_basic import KIND_VALUES, filter_vanilla_candidates
-from .tab_loot import POOL_VALUES, RARITY_VALUES
-from .tab_use import UNSUPPORTED_USE_MESSAGE
+from .history_dialog import open_history_dialog
+from .tab_ability import build_ability_tab, draw_ability_preview
+from .tab_basic import build_basic_tab
+from .tab_loot import build_loot_tab
+from .tab_use import build_use_tab
 
 
 def launch_gui(root: Path) -> None:
@@ -45,45 +46,22 @@ def launch_gui(root: Path) -> None:
     for frame, title in ((basic, "基本"), (loot, "出現設定"), (food, "食べ物/使用"), (ability, "右クリック"), (equip, "装備(未対応)"), (preview, "プレビュー")): notebook.add(frame, text=title)
     for frame in (basic, loot, food, ability, equip): frame.columnconfigure(1, weight=1)
 
-    entry(basic, 0, "内部ID", fields["key"]); ttk.Label(basic, text="種別").grid(row=1, column=0, sticky="w", padx=5, pady=4); kind_box = ttk.Combobox(basic, textvariable=kind, values=KIND_VALUES, state="readonly", width=22); kind_box.grid(row=1, column=1, sticky="ew", padx=5, pady=4); ttk.Label(basic, text="アイテムID").grid(row=2, column=0, sticky="w", padx=5, pady=4); id_box = ttk.Combobox(basic, textvariable=fields["id"], values=tuple(sorted(STACK_LIMITS)), state="normal", width=25); id_box.grid(row=2, column=1, sticky="ew", padx=5, pady=4); ttk.Label(basic, text="候補から選択できます。未知のVanilla IDは検証警告になります。", foreground="#666").grid(row=2, column=2, sticky="w", padx=5); entry(basic, 3, "表示名", fields["name"]); ttk.Checkbutton(basic, text="有効", variable=enabled).grid(row=4, column=1, sticky="w", padx=5, pady=4)
-    vanilla_candidates = tuple(sorted(STACK_LIMITS))
-    def update_vanilla_candidates(_event=None):
-        id_box.configure(values=filter_vanilla_candidates(vanilla_candidates, fields["id"].get()))
-    id_box.bind("<KeyRelease>", update_vanilla_candidates)
-    ttk.Label(basic, text="タグ").grid(row=5, column=0, sticky="nw", padx=5, pady=4); tag_frame = ttk.Frame(basic); tag_frame.grid(row=5, column=1, sticky="w")
-    for index, tag in enumerate(TAGS): ttk.Checkbutton(tag_frame, text=tag, variable=tag_vars[tag]).grid(row=index // 4, column=index % 4, sticky="w", padx=4)
-    ttk.Button(basic, text="PNGファイルを選択", command=lambda: choose_icon()).grid(row=6, column=0, padx=5, pady=8); ttk.Label(basic, textvariable=icon_label).grid(row=6, column=1, sticky="w", padx=5); icon_preview = ttk.Label(basic, text="プレビューなし"); icon_preview.grid(row=6, column=2, padx=8); ttk.Label(basic, text="音声ファイル: 未対応（Bedrock定義確認待ち）", foreground="#996600").grid(row=7, column=0, columnspan=3, sticky="w", padx=5, pady=8)
+    basic_widgets = build_basic_tab(basic, ttk, entry, fields, kind, enabled, tag_vars, TAGS, STACK_LIMITS, icon_label, lambda: choose_icon())
+    id_box = basic_widgets["id_box"]
+    icon_preview = basic_widgets["icon_preview"]
 
-    ttk.Label(loot, text="複数行を保持します。行を切り替えても自動反映されます。", foreground="#555").grid(row=0, column=0, columnspan=4, sticky="w", pady=4)
-    loot_table = ttk.Treeview(loot, columns=("pool", "rarity", "amount", "weight", "prob"), show="headings", height=8)
-    for col, title, width in (("pool", "pool", 100), ("rarity", "★", 50), ("amount", "個数", 70), ("weight", "出現確率(0〜1)", 130), ("prob", "1チェスト確率", 130)): loot_table.heading(col, text=title); loot_table.column(col, width=width)
-    loot_table.grid(row=1, column=0, columnspan=4, sticky="nsew", pady=6); loot.rowconfigure(1, weight=1)
-    matrix = ttk.Treeview(loot, columns=("pool", "r1", "r2", "r3", "r4", "r5", "r6", "r7"), show="headings", height=4)
-    for col, title in (("pool", "pool"), *( (f"r{i}", f"★{i}") for i in range(1, 8) )): matrix.heading(col, text=title); matrix.column(col, width=80, anchor="center")
-    matrix.grid(row=4, column=0, columnspan=4, sticky="ew", pady=(10, 4)); ttk.Label(loot, text="マトリクス: 件数 / 出現確率合計。セルをクリックすると、そのpool・レア度の行を追加します。", foreground="#555").grid(row=5, column=0, columnspan=4, sticky="w")
-    ttk.Button(loot, text="行を追加", command=lambda: add_loot_row()).grid(row=2, column=0, padx=3, pady=5, sticky="w"); ttk.Button(loot, text="選択行を削除", command=lambda: remove_loot_row()).grid(row=2, column=1, padx=3, pady=5, sticky="w")
-    loot_form = ttk.Frame(loot); loot_form.grid(row=3, column=0, columnspan=4, sticky="ew"); loot_form.columnconfigure(1, weight=1); ttk.Label(loot_form, text="選択行を編集").grid(row=0, column=0, columnspan=4, sticky="w"); ttk.Label(loot_form, text="pool").grid(row=1, column=0); pool_box = ttk.Combobox(loot_form, textvariable=fields["pool"], values=POOL_VALUES, state="readonly", width=12); pool_box.grid(row=1, column=1); ttk.Label(loot_form, text="★").grid(row=1, column=2); ttk.Combobox(loot_form, textvariable=fields["rarity"], values=RARITY_VALUES, state="readonly", width=8).grid(row=1, column=3); entry(loot_form, 2, "個数", fields["amount"]); entry(loot_form, 3, "出現確率(0〜1)", fields["weight"])
+    loot_table, matrix = build_loot_tab(loot, ttk, entry, fields, lambda: add_loot_row(), lambda: remove_loot_row())
 
-    ttk.Checkbutton(food, text="食べ物を有効化", variable=food_enabled).grid(row=0, column=0, columnspan=2, sticky="w", pady=5); entry(food, 1, "空腹回復", fields["nutrition"]); entry(food, 2, "満腹度", fields["saturation"]); ttk.Checkbutton(food, text="常に食べられる", variable=always_eat).grid(row=3, column=1, sticky="w"); entry(food, 4, "使用時間(秒)", fields["duration"]); entry(food, 5, "移動速度係数", fields["movement"]); ttk.Label(food, text="アニメーション").grid(row=6, column=0, sticky="w", padx=5); ttk.Combobox(food, textvariable=fields["animation"], values=("eat", "drink", "bow", "block", "none"), state="readonly", width=22).grid(row=6, column=1, sticky="ew", padx=5); ttk.Label(food, text=UNSUPPORTED_USE_MESSAGE, foreground="#996600").grid(row=7, column=0, columnspan=2, sticky="w", pady=10)
+    build_use_tab(food, ttk, entry, fields, food_enabled, always_eat)
 
-    ttk.Checkbutton(ability, text="右クリック能力を有効化", variable=ability_enabled).grid(row=0, column=0, columnspan=2, sticky="w"); ttk.Label(ability, text="発動").grid(row=1, column=0, sticky="w", padx=5, pady=4); ttk.Combobox(ability, textvariable=trigger, values=("tap", "hold"), state="readonly", width=22).grid(row=1, column=1, sticky="ew", padx=5); ttk.Label(ability, text="対象形状").grid(row=2, column=0, sticky="w", padx=5, pady=4); ttk.Combobox(ability, textvariable=target_type, values=TARGET_VALUES, state="readonly", width=22).grid(row=2, column=1, sticky="ew", padx=5); entry(ability, 3, "半径", fields["radius"]); entry(ability, 4, "角度", fields["angle"]); entry(ability, 5, "幅", fields["width"]); ttk.Label(ability, text="効果kind").grid(row=6, column=0, sticky="w", padx=5); ttk.Combobox(ability, textvariable=fields["target"], values=EFFECT_VALUES, state="readonly", width=22).grid(row=6, column=1, sticky="ew", padx=5); entry(ability, 7, "効果ID", fields["effect_id"]); entry(ability, 8, "効果時間(秒)", fields["effect_duration"]); entry(ability, 9, "効果レベル", fields["effect_level"]); entry(ability, 10, "回復量", fields["heal"]); ttk.Label(ability, text="対象判定はabilityContext経由。ダメージ/ノックバック/発火は未対応。", foreground="#996600").grid(row=11, column=0, columnspan=2, sticky="w", pady=10)
-    ability_canvas = tk.Canvas(ability, width=360, height=220, background="#20242b", highlightthickness=0); ability_canvas.grid(row=0, column=2, rowspan=12, padx=18, pady=8, sticky="nsew")
+    ability_canvas = build_ability_tab(ability, tk, ttk, entry, fields, ability_enabled, trigger, target_type)
 
-    def draw_ability_preview(*_args):
-        ability_canvas.delete("all"); cx, cy = 180, 110; ability_canvas.create_oval(cx - 4, cy - 4, cx + 4, cy + 4, fill="#ffffff", outline="")
-        try: radius = max(10, min(95, float(fields["radius"].get() or 3) * 20))
-        except ValueError: radius = 60
-        shape = target_type.get()
-        if shape == "circle": ability_canvas.create_oval(cx - radius, cy - radius, cx + radius, cy + radius, outline="#55ccff", width=3)
-        elif shape == "line": ability_canvas.create_rectangle(cx, cy - max(5, float(fields["width"].get() or 1) * 10), cx + radius, cy + max(5, float(fields["width"].get() or 1) * 10), outline="#55ccff", width=3)
-        elif shape == "cone": ability_canvas.create_arc(cx - radius, cy - radius, cx + radius, cy + radius, start=-45, extent=90, outline="#55ccff", width=3, style="arc")
-        elif shape == "look": ability_canvas.create_line(cx, cy, cx + radius, cy, fill="#55ccff", width=4)
-        else: ability_canvas.create_text(cx, cy - radius - 15, text="self", fill="#ffffff")
-    for variable in (target_type, fields["radius"], fields["angle"], fields["width"]): variable.trace_add("write", draw_ability_preview)
+    def refresh_ability_preview(*_args):
+        draw_ability_preview(ability_canvas, target_type.get(), fields["radius"].get(), fields["width"].get())
+    for variable in (target_type, fields["radius"], fields["angle"], fields["width"]): variable.trace_add("write", refresh_ability_preview)
 
     ttk.Label(equip, text="装備タブは設計書により未対応です", foreground="#996600").grid(row=0, column=0, columnspan=2, sticky="w"); ttk.Label(equip, text="Minecraftの装備コンポーネント確認後に有効化します。", foreground="#666").grid(row=1, column=0, columnspan=2, sticky="w")
-    preview.columnconfigure(0, weight=0); preview.columnconfigure(1, weight=1); preview.rowconfigure(0, weight=1)
-    preview_files = tk.Listbox(preview, width=42); preview_files.grid(row=0, column=0, sticky="nsew", padx=(0, 8)); preview_text = tk.Text(preview, wrap="none", state="disabled"); preview_text.grid(row=0, column=1, sticky="nsew")
+    preview_files, preview_text = build_preview_tab(preview, tk)
     preview_diffs = {}
 
     def show_preview_diff(_event=None):
@@ -193,7 +171,7 @@ def launch_gui(root: Path) -> None:
         if not row or column in ("", "#1"):
             return
         rarity = int(column[1:])
-        loot_rows.append(LootEntry(row, rarity, 1, 0.5)); refresh_loot_table(); loot_table.selection_set(str(len(loot_rows) - 1)); load_loot_row(loot_rows[-1]); write_form_to_item()
+        loot_rows.append(LootEntry(row, rarity, 1, 0.5)); refresh_loot_table(); loot_table.selection_set(str(len(loot_rows) - 1)); load_loot_row(loot_rows[-1]); try_write_form_to_item()
     matrix.bind("<Button-1>", add_matrix_row)
     validation_label.bind("<Button-1>", lambda _event: show_validation())
 
@@ -209,12 +187,24 @@ def launch_gui(root: Path) -> None:
         editor_state.record_change(before)
         refresh()
 
+    def try_write_form_to_item():
+        try:
+            write_form_to_item()
+        except ValueError as error:
+            messagebox.showerror("入力値エラー", str(error))
+            return False
+        return True
+
     def load_item(item, flush=False):
         previous_restoring = ui_guard["restoring"]
         ui_guard["restoring"] = True
         if flush:
             ui_guard["restoring"] = previous_restoring
-            write_form_to_item()
+            if not try_write_form_to_item():
+                ui_guard["restoring"] = previous_restoring
+                if editor_state.selected_index is not None:
+                    tree.selection_set(str(editor_state.selected_index))
+                return
             ui_guard["restoring"] = True
         if item not in items:
             ui_guard["restoring"] = previous_restoring
@@ -241,7 +231,12 @@ def launch_gui(root: Path) -> None:
     def commit_selected_loot():
         index = loot_selected["index"]
         if index is None or index >= len(loot_rows): return
-        row = loot_rows[index]; row.pool = fields["pool"].get(); row.rarity = int(fields["rarity"].get() or 1); row.amount = int(fields["amount"].get() or 1); row.weight = float(fields["weight"].get() or 0); refresh_loot_table()
+        row = loot_rows[index]
+        row.pool = fields["pool"].get()
+        row.rarity = parse_int(fields["rarity"].get(), "レア度", 1)
+        row.amount = parse_int(fields["amount"].get(), "個数", 1)
+        row.weight = parse_float(fields["weight"].get(), "出現確率", 0)
+        refresh_loot_table()
 
     def add_loot_row():
         commit_selected_loot(); loot_rows.append(LootEntry("common", 1, 1, 0.5)); refresh_loot_table(); loot_table.selection_set(str(len(loot_rows) - 1)); load_loot_row(loot_rows[-1])
@@ -258,7 +253,14 @@ def launch_gui(root: Path) -> None:
         return files
 
     def preview():
-        commit_selected_loot(); write_form_to_item(); files, conflicts = guarded_files(root, items, sources); entries = plan(root, {**files, **asset_files()}); preview_files.delete(0, "end"); preview_diffs.clear()
+        try:
+            commit_selected_loot()
+        except ValueError as error:
+            messagebox.showerror("入力値エラー", str(error))
+            return
+        if not try_write_form_to_item():
+            return
+        files, conflicts = guarded_files(root, items, sources); entries = plan(root, {**files, **asset_files()}); preview_files.delete(0, "end"); preview_diffs.clear()
         for entry in entries:
             relative = entry.path.relative_to(root).as_posix(); preview_files.insert("end", f"{entry.kind}: {relative}")
             preview_diffs[f"{entry.kind}: {relative}"] = unified_diff(relative, entry.old_content, entry.new_content)
@@ -307,7 +309,8 @@ def launch_gui(root: Path) -> None:
             item = template_item(template, items)
         else:
             key = suggest_key("minecraft:bread", items); item = Item(key, True, "vanilla", "minecraft:bread", "", ["food"], [LootEntry("common", 1, 1, 0.5)], None)
-        write_form_to_item(); editor_state.add(item); load_item(item, flush=False); refresh()
+        if try_write_form_to_item():
+            editor_state.add(item); load_item(item, flush=False); refresh()
 
     def new_custom():
         dialog = tk.Toplevel(window); dialog.title("Customテンプレート"); dialog.transient(window); dialog.grab_set(); choice = tk.StringVar(dialog, value="empty")
@@ -315,21 +318,22 @@ def launch_gui(root: Path) -> None:
         ttk.Button(dialog, text="作成", command=lambda: (dialog.destroy(), new_item("custom", choice.get()))).pack(pady=12)
     def duplicate_item():
         if editor_state.selected:
-            write_form_to_item(); item = copy.deepcopy(editor_state.selected); item.key = suggest_key(item.key, items); item.id = f"{item.id}_copy"; editor_state.add(item); load_item(item, flush=False); refresh()
+            if try_write_form_to_item():
+                item = copy.deepcopy(editor_state.selected); item.key = suggest_key(item.key, items); item.id = f"{item.id}_copy"; editor_state.add(item); load_item(item, flush=False); refresh()
 
     def show_history():
-        dialog = tk.Toplevel(window); dialog.title("履歴"); dialog.geometry("600x400"); listbox = tk.Listbox(dialog); listbox.pack(fill="both", expand=True, padx=10, pady=10); entries = history_entries(root)
-        for entry in entries: listbox.insert("end", f"{entry['name']} ({entry['files']} files)")
-        def restore_selected():
+        entries = history_entries(root)
+        def restore_selected(dialog, listbox):
             selected_index = listbox.curselection()
             if not selected_index or not messagebox.askyesno("履歴復元", "現在のitems.jsonを保存してから復元しますか？"):
                 return
             save(); restore_history(root, entries[selected_index[0]]["path"]); editor_state.replace_items(load_items(root), dirty=False); load_item(editor_state.selected, flush=False) if editor_state.selected else None; refresh(); status.set("履歴を復元して画面を更新しました"); dialog.destroy()
-        ttk.Button(dialog, text="選択した履歴を復元", command=restore_selected).pack(pady=(0, 10))
+        open_history_dialog(window, tk, ttk, entries, restore_selected)
     def delete_item():
         if not editor_state.selected or not messagebox.askyesno("削除確認", "items.jsonから削除しますか？"):
             return
-        write_form_to_item()
+        if not try_write_form_to_item():
+            return
         editor_state.remove_selected()
         ui_guard["allow_count_reduction"] = True
         refresh()
@@ -343,7 +347,7 @@ def launch_gui(root: Path) -> None:
     window.bind("<Control-s>", lambda _event: (save(), "break")[-1]); window.bind("<Control-z>", lambda _event: (undo(), "break")[-1]); window.bind("<Control-y>", lambda _event: (redo(), "break")[-1])
     refresh()
     if items: tree.selection_set("0"); load_item(items[0], flush=False)
-    draw_ability_preview()
+    refresh_ability_preview()
     def on_close():
         if editor_state.dirty:
             decision = messagebox.askyesnocancel("未保存の変更", "未保存の変更を保存して終了しますか？")
