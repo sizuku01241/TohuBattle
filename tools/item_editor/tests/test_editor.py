@@ -11,6 +11,8 @@ from tools.item_editor.writer import apply, plan
 from tools.item_editor.ui_logic import loot_matrix, suggest_key, template_item
 from tools.item_editor.store import load_settings, save_items, save_settings
 from tools.item_editor.state import EditorState
+from tools.item_editor.form_logic import apply_form_to_item
+from tools.item_editor.ui.tab_basic import filter_vanilla_candidates
 
 
 class ItemEditorTests(unittest.TestCase):
@@ -47,6 +49,52 @@ class ItemEditorTests(unittest.TestCase):
         for index in (1, 0, 1, 0, 1, 0):
             state.select(index)
         self.assertEqual(state.snapshot(), original)
+
+    def test_form_writeback_undo_redo_preserves_every_item(self):
+        items = [
+            Item("one", True, "vanilla", "minecraft:bread", "one"),
+            Item("two", True, "vanilla", "minecraft:arrow", "two"),
+        ]
+        state = EditorState(items)
+        original = state.snapshot()
+        before = state.snapshot()
+        changed = apply_form_to_item(
+            state.selected,
+            {"key": "one", "id": "minecraft:bread", "name": "変更", "kind": "vanilla", "enabled": True},
+            state.selected.loot,
+            state.selected.tags,
+        )
+        state.items[state.selected_index] = changed
+        state.record_change(before)
+        changed_snapshot = state.snapshot()
+        state.undo()
+        self.assertEqual(state.snapshot(), original)
+        state.redo()
+        self.assertEqual(state.snapshot(), changed_snapshot)
+        self.assertEqual(state.items[1].id, "minecraft:arrow")
+
+    def test_editor_state_delete_keeps_valid_selection(self):
+        state = EditorState([
+            Item("one", True, "vanilla", "minecraft:bread", "one"),
+            Item("two", True, "vanilla", "minecraft:arrow", "two"),
+            Item("three", True, "vanilla", "minecraft:bow", "three"),
+        ])
+        state.select(1)
+        state.remove_selected()
+        self.assertEqual(state.selected.key, "three")
+        state.remove_selected()
+        self.assertEqual(state.selected.key, "one")
+
+    def test_editor_state_history_restore_replaces_state(self):
+        state = EditorState([Item("one", True, "vanilla", "minecraft:bread", "one")])
+        restored = [Item("restored", True, "vanilla", "minecraft:arrow", "restored")]
+        state.replace_items(restored, dirty=False)
+        self.assertEqual(state.selected.key, "restored")
+        self.assertFalse(state.dirty)
+
+    def test_vanilla_id_candidates_are_searchable(self):
+        self.assertEqual(filter_vanilla_candidates(("minecraft:arrow", "minecraft:bread"), "bread"), ("minecraft:bread",))
+        self.assertEqual(filter_vanilla_candidates(("minecraft:arrow",), "unknown"), ())
 
     def test_editor_logic_key_templates_and_matrix(self):
         existing = [Item("bread", True, "vanilla", "minecraft:bread", "パン")]

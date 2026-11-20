@@ -13,6 +13,7 @@ class EditorState:
         self.selected_index: int | None = 0 if items else None
         self.undo_stack: list[list[dict]] = []
         self.redo_stack: list[list[dict]] = []
+        self.dirty = False
 
     @property
     def selected(self) -> Item | None:
@@ -33,7 +34,7 @@ class EditorState:
     def snapshot(self) -> list[dict]:
         return copy.deepcopy([item_to_dict(item) for item in self.items])
 
-    def replace(self, data: list[dict]) -> Item | None:
+    def replace(self, data: list[dict], dirty: bool = True) -> Item | None:
         self.items[:] = [item_from_dict(raw) for raw in copy.deepcopy(data)]
         if not self.items:
             self.selected_index = None
@@ -41,6 +42,13 @@ class EditorState:
             self.selected_index = 0
         else:
             self.selected_index = min(self.selected_index, len(self.items) - 1)
+        self.dirty = dirty
+        return self.selected
+
+    def replace_items(self, items: list[Item], dirty: bool = False) -> Item | None:
+        self.items[:] = items
+        self.selected_index = 0 if self.items else None
+        self.dirty = dirty
         return self.selected
 
     def record_change(self, before: list[dict]) -> None:
@@ -48,18 +56,19 @@ class EditorState:
             return
         self.undo_stack.append(copy.deepcopy(before))
         self.redo_stack.clear()
+        self.dirty = True
 
     def undo(self) -> Item | None:
         if not self.undo_stack:
             return self.selected
         self.redo_stack.append(self.snapshot())
-        return self.replace(self.undo_stack.pop())
+        return self.replace(self.undo_stack.pop(), dirty=True)
 
     def redo(self) -> Item | None:
         if not self.redo_stack:
             return self.selected
         self.undo_stack.append(self.snapshot())
-        return self.replace(self.redo_stack.pop())
+        return self.replace(self.redo_stack.pop(), dirty=True)
 
     def remove_selected(self) -> Item | None:
         if self.selected_index is None or not 0 <= self.selected_index < len(self.items):
@@ -69,4 +78,17 @@ class EditorState:
             self.selected_index = None
         else:
             self.selected_index = min(self.selected_index, len(self.items) - 1)
+        self.dirty = True
         return self.selected
+
+    def add(self, item: Item) -> Item:
+        self.items.append(item)
+        self.selected_index = len(self.items) - 1
+        self.dirty = True
+        return item
+
+    def clear_dirty(self) -> None:
+        self.dirty = False
+
+    def mark_dirty(self) -> None:
+        self.dirty = True

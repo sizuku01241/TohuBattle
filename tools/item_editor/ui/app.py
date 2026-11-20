@@ -2,15 +2,17 @@ import copy
 from pathlib import Path
 
 from ..generators.loot_js import simulate_item_probability
-from ..models import CustomSpec, Item, LootEntry, item_from_dict, item_to_dict
+from ..models import CustomSpec, Item, LootEntry
+from ..form_logic import apply_form_to_item
 from ..store import load_items, load_settings, save_items, save_settings
 from ..state import EditorState
 from ..validators import STACK_LIMITS, TAGS, validate
 from ..writer import apply, plan
 from ..ui_logic import history_entries, loot_matrix, restore_history, suggest_key, template_item
 from .preview import unified_diff
+from .item_list import build_filter_header, build_item_tree
 from .tab_ability import EFFECT_VALUES, TARGET_VALUES
-from .tab_basic import KIND_VALUES
+from .tab_basic import KIND_VALUES, filter_vanilla_candidates
 from .tab_loot import POOL_VALUES, RARITY_VALUES
 from .tab_use import UNSUPPORTED_USE_MESSAGE
 
@@ -22,8 +24,8 @@ def launch_gui(root: Path) -> None:
 
     settings = load_settings(root)
     window = tk.Tk(); window.title("TBR-001 アイテム管理GUI"); window.geometry(settings.get("window_geometry", "1350x850")); window.minsize(1100, 700)
-    items = ensure_items(root); editor_state = EditorState(items); sources = source_texts(root); selected = {"item": editor_state.selected}; asset_sources = {}; search = tk.StringVar(master=window); filter_kind = tk.StringVar(master=window, value="すべて"); filter_tag = tk.StringVar(master=window, value="すべて"); filter_pool = tk.StringVar(master=window, value="すべて"); filter_state = tk.StringVar(master=window, value="すべて"); status = tk.StringVar(master=window, value="自動取り込み済み。項目を切り替えると編集内容を反映します")
-    edit_state = {"dirty": False, "restoring": False, "undo": [], "redo": [], "allow_count_reduction": False}
+    items = ensure_items(root); editor_state = EditorState(items); sources = source_texts(root); asset_sources = {}; search = tk.StringVar(master=window); filter_kind = tk.StringVar(master=window, value="すべて"); filter_tag = tk.StringVar(master=window, value="すべて"); filter_pool = tk.StringVar(master=window, value="すべて"); filter_state = tk.StringVar(master=window, value="すべて"); status = tk.StringVar(master=window, value="自動取り込み済み。項目を切り替えると編集内容を反映します")
+    ui_guard = {"restoring": False, "allow_count_reduction": False}
     saved_filters = settings.get("filters", {})
     filter_kind.set(saved_filters.get("kind", "すべて")); filter_tag.set(saved_filters.get("tag", "すべて")); filter_pool.set(saved_filters.get("pool", "すべて")); filter_state.set(saved_filters.get("state", "すべて"))
     window.columnconfigure(1, weight=1); window.rowconfigure(1, weight=1)
@@ -34,15 +36,9 @@ def launch_gui(root: Path) -> None:
     def entry(frame, row, label, var, column=0):
         ttk.Label(frame, text=label).grid(row=row, column=column, sticky="w", padx=5, pady=4); widget = ttk.Entry(frame, textvariable=var, width=25); widget.grid(row=row, column=column + 1, sticky="ew", padx=5, pady=4); return widget
 
-    header = ttk.Frame(window); header.grid(row=0, column=0, columnspan=2, sticky="ew", padx=10, pady=8); ttk.Label(header, text="検索").pack(side="left"); ttk.Entry(header, textvariable=search, width=24).pack(side="left", padx=6)
-    ttk.Label(header, text="種別").pack(side="left"); ttk.Combobox(header, textvariable=filter_kind, values=("すべて", "custom", "vanilla"), state="readonly", width=9).pack(side="left", padx=3)
-    ttk.Label(header, text="タグ").pack(side="left"); ttk.Combobox(header, textvariable=filter_tag, values=("すべて", *sorted(TAGS)), state="readonly", width=11).pack(side="left", padx=3)
-    ttk.Label(header, text="pool").pack(side="left"); ttk.Combobox(header, textvariable=filter_pool, values=("すべて", "common", "supply", "ground"), state="readonly", width=9).pack(side="left", padx=3)
-    ttk.Label(header, text="状態").pack(side="left"); ttk.Combobox(header, textvariable=filter_state, values=("すべて", "有効", "無効", "エラーあり"), state="readonly", width=11).pack(side="left", padx=3)
-    tree_frame = ttk.LabelFrame(window, text="登録アイテム"); tree_frame.grid(row=1, column=0, sticky="nsew", padx=(10, 5), pady=5); tree_frame.rowconfigure(0, weight=1); tree_frame.columnconfigure(0, weight=1)
-    tree = ttk.Treeview(tree_frame, columns=("kind", "id", "name", "loot", "state"), show="headings", selectmode="browse")
-    for col, title, width in (("kind", "種別", 70), ("id", "ID", 190), ("name", "名前", 120), ("loot", "出現設定", 100), ("state", "状態", 60)): tree.heading(col, text=title); tree.column(col, width=width)
-    tree.grid(row=0, column=0, sticky="nsew"); tree_scroll = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview); tree_scroll.grid(row=0, column=1, sticky="ns"); tree.configure(yscrollcommand=tree_scroll.set)
+    filter_variables = {"search": search, "kind": filter_kind, "tag": filter_tag, "pool": filter_pool, "state": filter_state}
+    build_filter_header(window, tk, ttk, filter_variables, TAGS)
+    tree = build_item_tree(window, ttk)
     editor = ttk.Frame(window); editor.grid(row=1, column=1, sticky="nsew", padx=(5, 10), pady=5); editor.rowconfigure(0, weight=1); editor.columnconfigure(0, weight=1)
     notebook = ttk.Notebook(editor); notebook.grid(row=0, column=0, sticky="nsew")
     basic = ttk.Frame(notebook, padding=12); loot = ttk.Frame(notebook, padding=12); food = ttk.Frame(notebook, padding=12); ability = ttk.Frame(notebook, padding=12); equip = ttk.Frame(notebook, padding=12); preview = ttk.Frame(notebook, padding=8)
@@ -50,6 +46,10 @@ def launch_gui(root: Path) -> None:
     for frame in (basic, loot, food, ability, equip): frame.columnconfigure(1, weight=1)
 
     entry(basic, 0, "内部ID", fields["key"]); ttk.Label(basic, text="種別").grid(row=1, column=0, sticky="w", padx=5, pady=4); kind_box = ttk.Combobox(basic, textvariable=kind, values=KIND_VALUES, state="readonly", width=22); kind_box.grid(row=1, column=1, sticky="ew", padx=5, pady=4); ttk.Label(basic, text="アイテムID").grid(row=2, column=0, sticky="w", padx=5, pady=4); id_box = ttk.Combobox(basic, textvariable=fields["id"], values=tuple(sorted(STACK_LIMITS)), state="normal", width=25); id_box.grid(row=2, column=1, sticky="ew", padx=5, pady=4); ttk.Label(basic, text="候補から選択できます。未知のVanilla IDは検証警告になります。", foreground="#666").grid(row=2, column=2, sticky="w", padx=5); entry(basic, 3, "表示名", fields["name"]); ttk.Checkbutton(basic, text="有効", variable=enabled).grid(row=4, column=1, sticky="w", padx=5, pady=4)
+    vanilla_candidates = tuple(sorted(STACK_LIMITS))
+    def update_vanilla_candidates(_event=None):
+        id_box.configure(values=filter_vanilla_candidates(vanilla_candidates, fields["id"].get()))
+    id_box.bind("<KeyRelease>", update_vanilla_candidates)
     ttk.Label(basic, text="タグ").grid(row=5, column=0, sticky="nw", padx=5, pady=4); tag_frame = ttk.Frame(basic); tag_frame.grid(row=5, column=1, sticky="w")
     for index, tag in enumerate(TAGS): ttk.Checkbutton(tag_frame, text=tag, variable=tag_vars[tag]).grid(row=index // 4, column=index % 4, sticky="w", padx=4)
     ttk.Button(basic, text="PNGファイルを選択", command=lambda: choose_icon()).grid(row=6, column=0, padx=5, pady=8); ttk.Label(basic, textvariable=icon_label).grid(row=6, column=1, sticky="w", padx=5); icon_preview = ttk.Label(basic, text="プレビューなし"); icon_preview.grid(row=6, column=2, padx=8); ttk.Label(basic, text="音声ファイル: 未対応（Bedrock定義確認待ち）", foreground="#996600").grid(row=7, column=0, columnspan=3, sticky="w", padx=5, pady=8)
@@ -108,40 +108,32 @@ def launch_gui(root: Path) -> None:
 
     def choose_icon():
         path = filedialog.askopenfilename(title="アイコンPNGを選択", filetypes=(("PNG画像", "*.png"),))
-        if path: asset_sources[id(selected["item"])] = path; icon_label.set(Path(path).name); update_icon_preview(path); refresh()
+        if editor_state.selected: asset_sources[id(editor_state.selected)] = path; icon_label.set(Path(path).name); update_icon_preview(path); refresh()
 
     validation_label = ttk.Label(window, text="", anchor="w")
     validation_label.grid(row=3, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 6))
 
     def update_title():
-        window.title(("*" if edit_state["dirty"] else "") + "TBR-001 アイテム管理GUI")
+        window.title(("*" if editor_state.dirty else "") + "TBR-001 アイテム管理GUI")
 
     def mark_dirty(*_args):
-        if not edit_state["restoring"]:
-            edit_state["dirty"] = True
+        if not ui_guard["restoring"]:
+            editor_state.mark_dirty()
             update_title()
 
-    def snapshot():
-        return copy.deepcopy([item_to_dict(item) for item in items])
-
-    def restore_snapshot(data):
-        edit_state["restoring"] = True
-        editor_state.replace(data)
-        selected["item"] = editor_state.selected
-        refresh()
-        if selected["item"]:
-            load_item(selected["item"], flush=False)
-        edit_state["restoring"] = False
-
     def undo():
-        if not edit_state["undo"]:
-            return
-        edit_state["redo"].append(snapshot()); restore_snapshot(edit_state["undo"].pop()); edit_state["dirty"] = True; update_title()
+        editor_state.undo()
+        if editor_state.selected:
+            load_item(editor_state.selected, flush=False)
+        refresh()
+        update_title()
 
     def redo():
-        if not edit_state["redo"]:
-            return
-        edit_state["undo"].append(snapshot()); restore_snapshot(edit_state["redo"].pop()); edit_state["dirty"] = True; update_title()
+        editor_state.redo()
+        if editor_state.selected:
+            load_item(editor_state.selected, flush=False)
+        refresh()
+        update_title()
 
     def refresh():
         tree.delete(*tree.get_children()); needle = search.get().lower(); issues = validate(items); errors = sum(level == "error" for _, level, _ in issues); warnings = sum(level == "warning" for _, level, _ in issues)
@@ -186,7 +178,6 @@ def launch_gui(root: Path) -> None:
             key = issues[selection[0]][0]
             for index, item in enumerate(items):
                 if item.key == key:
-                    selected["item"] = item
                     load_item(item)
                     refresh()
                     tree.selection_set(str(index))
@@ -207,50 +198,35 @@ def launch_gui(root: Path) -> None:
     validation_label.bind("<Button-1>", lambda _event: show_validation())
 
     def write_form_to_item():
-        item = selected["item"]
+        item = editor_state.selected
         if not item or item not in items: return
-        before = snapshot()
         commit_selected_loot()
-        item.key = fields["key"].get().strip(); item.id = fields["id"].get().strip(); item.display_name = fields["name"].get(); item.kind = kind.get(); item.enabled = enabled.get(); item.tags = [tag for tag, var in tag_vars.items() if var.get()]
-        item.loot = copy.deepcopy(loot_rows)
-        if item.kind == "custom":
-            custom = item.custom or CustomSpec(); custom.icon = custom.icon or ""
-            if asset_sources.get(id(item)): custom.icon = f"tools/items/icons/{item.key}.png"
-            custom.use = {"duration_sec": float(fields["duration"].get() or 1.6), "movement_modifier": float(fields["movement"].get() or 0.35), "animation": fields["animation"].get()} if food_enabled.get() else None
-            custom.food = {"nutrition": int(fields["nutrition"].get() or 0), "saturation_modifier": float(fields["saturation"].get() or 0), "can_always_eat": always_eat.get()} if food_enabled.get() else None
-            if ability_enabled.get():
-                custom.on_use = {"trigger": trigger.get(), "target": {"type": target_type.get(), "radius": float(fields["radius"].get() or 0), "angle": float(fields["angle"].get() or 90), "width": float(fields["width"].get() or 1)}, "effects": [{"kind": fields["target"].get() or "heal", "id": fields["effect_id"].get(), "duration_sec": float(fields["effect_duration"].get() or 1), "level": int(fields["effect_level"].get() or 1), "amount": float(fields["heal"].get() or 0)}]}
-            else:
-                custom.on_use = None
-            item.custom = custom
-        else: item.custom = None
-        after = snapshot()
-        if before != after and not edit_state["restoring"]:
-            edit_state["undo"].append(before)
-            edit_state["redo"].clear()
-            edit_state["dirty"] = True
-            update_title()
+        before = editor_state.snapshot()
+        values = {"key": fields["key"].get(), "id": fields["id"].get(), "name": fields["name"].get(), "kind": kind.get(), "enabled": enabled.get(), "food_enabled": food_enabled.get(), "nutrition": fields["nutrition"].get(), "saturation": fields["saturation"].get(), "duration": fields["duration"].get(), "movement": fields["movement"].get(), "animation": fields["animation"].get(), "always_eat": always_eat.get(), "ability_enabled": ability_enabled.get(), "trigger": trigger.get(), "target_type": target_type.get(), "radius": fields["radius"].get(), "angle": fields["angle"].get(), "width": fields["width"].get(), "effect_kind": fields["target"].get(), "effect_id": fields["effect_id"].get(), "effect_duration": fields["effect_duration"].get(), "effect_level": fields["effect_level"].get(), "heal": fields["heal"].get()}
+        icon = f"tools/items/icons/{values['key']}.png" if asset_sources.get(id(item)) else None
+        changed = apply_form_to_item(item, values, loot_rows, [tag for tag, var in tag_vars.items() if var.get()], icon)
+        items[editor_state.selected_index] = changed
+        editor_state.record_change(before)
         refresh()
 
     def load_item(item, flush=False):
-        previous_restoring = edit_state["restoring"]
-        edit_state["restoring"] = True
+        previous_restoring = ui_guard["restoring"]
+        ui_guard["restoring"] = True
         if flush:
-            edit_state["restoring"] = previous_restoring
+            ui_guard["restoring"] = previous_restoring
             write_form_to_item()
-            edit_state["restoring"] = True
+            ui_guard["restoring"] = True
         if item not in items:
-            edit_state["restoring"] = previous_restoring
+            ui_guard["restoring"] = previous_restoring
             return
         editor_state.select_item(item)
-        selected["item"] = editor_state.selected
         fields["key"].set(item.key); fields["id"].set(item.id); fields["name"].set(item.display_name); kind.set(item.kind); enabled.set(item.enabled)
         for tag, var in tag_vars.items(): var.set(tag in item.tags)
         loot_rows.clear(); loot_rows.extend(copy.deepcopy(item.loot)); refresh_loot_table()
         entry = loot_rows[0] if loot_rows else LootEntry("common", 1, 1, 0.5); load_loot_row(entry)
         custom = item.custom or CustomSpec(); icon_label.set(Path(custom.icon).name if custom.icon else "未選択"); icon_source = asset_sources.get(id(item)); update_icon_preview(icon_source) if icon_source else icon_preview.configure(image="", text="プレビューなし"); food_enabled.set(bool(custom.food)); fields["nutrition"].set(str((custom.food or {}).get("nutrition", ""))); fields["saturation"].set(str((custom.food or {}).get("saturation_modifier", ""))); fields["duration"].set(str((custom.use or {}).get("duration_sec", "1.6"))); fields["movement"].set(str((custom.use or {}).get("movement_modifier", "0.35"))); fields["animation"].set((custom.use or {}).get("animation", "eat")); ability_enabled.set(bool(custom.on_use));
         if custom.on_use: target = custom.on_use.get("target", {}); target_type.set(target.get("type", "self")); fields["radius"].set(str(target.get("radius", ""))); fields["angle"].set(str(target.get("angle", ""))); fields["width"].set(str(target.get("width", ""))); effect = (custom.on_use.get("effects") or [{}])[0]; fields["target"].set(effect.get("kind", "heal")); fields["effect_id"].set(effect.get("id", "")); fields["effect_duration"].set(str(effect.get("duration_sec", ""))); fields["effect_level"].set(str(effect.get("level", ""))); fields["heal"].set(str(effect.get("amount", "")))
-        edit_state["restoring"] = previous_restoring
+        ui_guard["restoring"] = previous_restoring
 
     def load_loot_row(row):
         loot_selected["index"] = loot_rows.index(row) if row in loot_rows else None
@@ -259,7 +235,7 @@ def launch_gui(root: Path) -> None:
     def refresh_loot_table():
         loot_table.delete(*loot_table.get_children())
         for index, row in enumerate(loot_rows):
-            probability = simulate_item_probability(items, selected["item"].id if selected["item"] else "", row.pool)
+            probability = simulate_item_probability(items, editor_state.selected.id if editor_state.selected else "", row.pool)
             loot_table.insert("", "end", iid=str(index), values=(row.pool, row.rarity, row.amount, f"{row.weight:g}", f"{probability:.1%}"))
 
     def commit_selected_loot():
@@ -300,7 +276,7 @@ def launch_gui(root: Path) -> None:
         if invalid:
             raise ValueError("空のkeyまたはIDを持つアイテムがあるため保存できません: " + ", ".join(invalid))
         previous = load_items(root)
-        if len(items) < len(previous) and not edit_state["allow_count_reduction"]:
+        if len(items) < len(previous) and not ui_guard["allow_count_reduction"]:
             if not messagebox.askyesno("件数減少の確認", f"保存前よりアイテム数が{len(previous)}件から{len(items)}件に減ります。続行しますか？"):
                 return False
         return True
@@ -310,10 +286,10 @@ def launch_gui(root: Path) -> None:
             commit_selected_loot(); write_form_to_item()
             if not check_save_safety():
                 return
-            save_items(root, items); edit_state["allow_count_reduction"] = False
+            save_items(root, items); ui_guard["allow_count_reduction"] = False
             assets = asset_files()
             if assets: apply(root, plan(root, assets))
-            status.set("入力データと選択済みアイコンを保存しました"); edit_state["dirty"] = False; update_title()
+            status.set("入力データと選択済みアイコンを保存しました"); editor_state.clear_dirty(); update_title()
         except Exception as exc: messagebox.showerror("保存エラー", str(exc))
 
     def generate():
@@ -323,7 +299,7 @@ def launch_gui(root: Path) -> None:
             if not check_save_safety():
                 return
             files, conflicts = guarded_files(root, items, sources); entries = plan(root, {**files, **asset_files()})
-            if messagebox.askyesno("生成確認", "プレビューの内容をバックアップ後に書き込みますか？"): apply(root, entries); save_items(root, items); edit_state["allow_count_reduction"] = False; status.set("生成しました"); edit_state["dirty"] = False; update_title()
+            if messagebox.askyesno("生成確認", "プレビューの内容をバックアップ後に書き込みますか？"): apply(root, entries); save_items(root, items); ui_guard["allow_count_reduction"] = False; status.set("生成しました"); editor_state.clear_dirty(); update_title()
         except Exception as exc: messagebox.showerror("生成エラー", str(exc))
 
     def new_item(item_kind, template="empty"):
@@ -331,15 +307,15 @@ def launch_gui(root: Path) -> None:
             item = template_item(template, items)
         else:
             key = suggest_key("minecraft:bread", items); item = Item(key, True, "vanilla", "minecraft:bread", "", ["food"], [LootEntry("common", 1, 1, 0.5)], None)
-        write_form_to_item(); items.append(item); editor_state.select_item(item); load_item(item, flush=False); refresh()
+        write_form_to_item(); editor_state.add(item); load_item(item, flush=False); refresh()
 
     def new_custom():
         dialog = tk.Toplevel(window); dialog.title("Customテンプレート"); dialog.transient(window); dialog.grab_set(); choice = tk.StringVar(dialog, value="empty")
         ttk.Label(dialog, text="テンプレートを選択").pack(padx=16, pady=(16, 4)); box = ttk.Combobox(dialog, textvariable=choice, state="readonly", values=("empty", "food", "healing", "ability")); box.pack(padx=16, pady=4)
         ttk.Button(dialog, text="作成", command=lambda: (dialog.destroy(), new_item("custom", choice.get()))).pack(pady=12)
     def duplicate_item():
-        if selected["item"]:
-            write_form_to_item(); item = copy.deepcopy(selected["item"]); item.key = suggest_key(item.key, items); item.id = f"{item.id}_copy"; items.append(item); editor_state.select_item(item); load_item(item, flush=False); refresh()
+        if editor_state.selected:
+            write_form_to_item(); item = copy.deepcopy(editor_state.selected); item.key = suggest_key(item.key, items); item.id = f"{item.id}_copy"; editor_state.add(item); load_item(item, flush=False); refresh()
 
     def show_history():
         dialog = tk.Toplevel(window); dialog.title("履歴"); dialog.geometry("600x400"); listbox = tk.Listbox(dialog); listbox.pack(fill="both", expand=True, padx=10, pady=10); entries = history_entries(root)
@@ -348,19 +324,17 @@ def launch_gui(root: Path) -> None:
             selected_index = listbox.curselection()
             if not selected_index or not messagebox.askyesno("履歴復元", "現在のitems.jsonを保存してから復元しますか？"):
                 return
-            save(); restore_history(root, entries[selected_index[0]]["path"]); items[:] = load_items(root); editor_state.items = items; editor_state.select(0 if items else None); selected["item"] = editor_state.selected; load_item(selected["item"], flush=False) if selected["item"] else None; refresh(); status.set("履歴を復元して画面を更新しました"); dialog.destroy()
+            save(); restore_history(root, entries[selected_index[0]]["path"]); editor_state.replace_items(load_items(root), dirty=False); load_item(editor_state.selected, flush=False) if editor_state.selected else None; refresh(); status.set("履歴を復元して画面を更新しました"); dialog.destroy()
         ttk.Button(dialog, text="選択した履歴を復元", command=restore_selected).pack(pady=(0, 10))
     def delete_item():
-        if not selected["item"] or not messagebox.askyesno("削除確認", "items.jsonから削除しますか？"):
+        if not editor_state.selected or not messagebox.askyesno("削除確認", "items.jsonから削除しますか？"):
             return
         write_form_to_item()
-        editor_state.select_item(selected["item"])
         editor_state.remove_selected()
-        selected["item"] = editor_state.selected
-        edit_state["allow_count_reduction"] = True
+        ui_guard["allow_count_reduction"] = True
         refresh()
-        if selected["item"]:
-            load_item(selected["item"], flush=False)
+        if editor_state.selected:
+            load_item(editor_state.selected, flush=False)
 
     tree.bind("<<TreeviewSelect>>", lambda _event: load_item(items[int(tree.selection()[0])], flush=True) if tree.selection() else None); search.trace_add("write", lambda *_: refresh()); filter_kind.trace_add("write", lambda *_: refresh()); filter_tag.trace_add("write", lambda *_: refresh()); filter_pool.trace_add("write", lambda *_: refresh()); filter_state.trace_add("write", lambda *_: refresh())
     footer = ttk.Frame(window); footer.grid(row=2, column=0, columnspan=2, sticky="ew", padx=10, pady=8); ttk.Button(footer, text="新規Custom", command=new_custom).pack(side="left", padx=3); ttk.Button(footer, text="新規Vanilla", command=lambda: new_item("vanilla")).pack(side="left", padx=3); ttk.Button(footer, text="複製", command=duplicate_item).pack(side="left", padx=3); ttk.Button(footer, text="削除", command=delete_item).pack(side="left", padx=3); ttk.Button(footer, text="履歴", command=show_history).pack(side="left", padx=3); ttk.Button(footer, text="元に戻す", command=undo).pack(side="left", padx=3); ttk.Button(footer, text="やり直す", command=redo).pack(side="left", padx=3); ttk.Button(footer, text="保存", command=save).pack(side="left", padx=3); ttk.Button(footer, text="生成プレビュー", command=preview).pack(side="left", padx=3); ttk.Button(footer, text="確認して生成", command=generate).pack(side="left", padx=3); ttk.Label(footer, textvariable=status).pack(side="left", padx=12)
@@ -371,13 +345,13 @@ def launch_gui(root: Path) -> None:
     if items: tree.selection_set("0"); load_item(items[0], flush=False)
     draw_ability_preview()
     def on_close():
-        if edit_state["dirty"]:
+        if editor_state.dirty:
             decision = messagebox.askyesnocancel("未保存の変更", "未保存の変更を保存して終了しますか？")
             if decision is None:
                 return
             if decision:
                 save()
-        save_settings(root, {"window_geometry": window.geometry(), "last_key": selected["item"].key if selected["item"] else "", "filters": {"kind": filter_kind.get(), "tag": filter_tag.get(), "pool": filter_pool.get(), "state": filter_state.get()}})
+        save_settings(root, {"window_geometry": window.geometry(), "last_key": editor_state.selected.key if editor_state.selected else "", "filters": {"kind": filter_kind.get(), "tag": filter_tag.get(), "pool": filter_pool.get(), "state": filter_state.get()}})
         window.destroy()
     window.protocol("WM_DELETE_WINDOW", on_close)
     window.mainloop()
