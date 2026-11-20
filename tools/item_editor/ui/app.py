@@ -8,7 +8,7 @@ from ..store import load_items, load_settings, save_items, save_settings
 from ..state import EditorState
 from ..validators import STACK_LIMITS, TAGS, validate
 from ..writer import apply, plan
-from ..ui_logic import history_entries, loot_matrix, restore_history, suggest_key, template_item
+from ..ui_logic import change_selection, history_entries, loot_matrix, restore_history, suggest_key, template_item
 from .preview import build_preview_tab, unified_diff
 from .item_list import build_filter_header, build_item_tree
 from .history_dialog import open_history_dialog
@@ -27,6 +27,7 @@ def launch_gui(root: Path) -> None:
     window = tk.Tk(); window.title("TBR-001 アイテム管理GUI"); window.geometry(settings.get("window_geometry", "1350x850")); window.minsize(1100, 700)
     items = ensure_items(root); editor_state = EditorState(items); sources = source_texts(root); asset_sources = {}; search = tk.StringVar(master=window); filter_kind = tk.StringVar(master=window, value="すべて"); filter_tag = tk.StringVar(master=window, value="すべて"); filter_pool = tk.StringVar(master=window, value="すべて"); filter_state = tk.StringVar(master=window, value="すべて"); status = tk.StringVar(master=window, value="自動取り込み済み。項目を切り替えると編集内容を反映します")
     ui_guard = {"restoring": False, "allow_count_reduction": False}
+    dialog_guard = {"input_error_open": False}
     saved_filters = settings.get("filters", {})
     filter_kind.set(saved_filters.get("kind", "すべて")); filter_tag.set(saved_filters.get("tag", "すべて")); filter_pool.set(saved_filters.get("pool", "すべて")); filter_state.set(saved_filters.get("state", "すべて"))
     window.columnconfigure(1, weight=1); window.rowconfigure(1, weight=1)
@@ -102,14 +103,14 @@ def launch_gui(root: Path) -> None:
     def undo():
         editor_state.undo()
         if editor_state.selected:
-            load_item(editor_state.selected, flush=False)
+            load_item(editor_state.selected)
         refresh()
         update_title()
 
     def redo():
         editor_state.redo()
         if editor_state.selected:
-            load_item(editor_state.selected, flush=False)
+            load_item(editor_state.selected)
         refresh()
         update_title()
 
@@ -187,25 +188,26 @@ def launch_gui(root: Path) -> None:
         editor_state.record_change(before)
         refresh()
 
+    def show_input_error(error):
+        if dialog_guard["input_error_open"]:
+            return
+        dialog_guard["input_error_open"] = True
+        try:
+            messagebox.showerror("入力値エラー", str(error))
+        finally:
+            dialog_guard["input_error_open"] = False
+
     def try_write_form_to_item():
         try:
             write_form_to_item()
         except ValueError as error:
-            messagebox.showerror("入力値エラー", str(error))
+            show_input_error(error)
             return False
         return True
 
-    def load_item(item, flush=False):
+    def load_item(item):
         previous_restoring = ui_guard["restoring"]
         ui_guard["restoring"] = True
-        if flush:
-            ui_guard["restoring"] = previous_restoring
-            if not try_write_form_to_item():
-                ui_guard["restoring"] = previous_restoring
-                if editor_state.selected_index is not None:
-                    tree.selection_set(str(editor_state.selected_index))
-                return
-            ui_guard["restoring"] = True
         if item not in items:
             ui_guard["restoring"] = previous_restoring
             return
@@ -243,7 +245,17 @@ def launch_gui(root: Path) -> None:
     def remove_loot_row():
         selection = loot_table.selection()
         if selection: loot_rows.pop(int(selection[0])); refresh_loot_table()
-    loot_table.bind("<<TreeviewSelect>>", lambda _event: (commit_selected_loot(), load_loot_row(loot_rows[int(loot_table.selection()[0])])) if loot_table.selection() else None)
+    def handle_loot_selection(_event=None):
+        selection = loot_table.selection()
+        if not selection:
+            return
+        try:
+            commit_selected_loot()
+        except ValueError as error:
+            show_input_error(error)
+            return
+        load_loot_row(loot_rows[int(selection[0])])
+    loot_table.bind("<<TreeviewSelect>>", handle_loot_selection)
 
     def asset_files():
         files = {}
@@ -256,7 +268,7 @@ def launch_gui(root: Path) -> None:
         try:
             commit_selected_loot()
         except ValueError as error:
-            messagebox.showerror("入力値エラー", str(error))
+            show_input_error(error)
             return
         if not try_write_form_to_item():
             return
@@ -287,12 +299,15 @@ def launch_gui(root: Path) -> None:
         try:
             commit_selected_loot(); write_form_to_item()
             if not check_save_safety():
-                return
+                return False
             save_items(root, items); ui_guard["allow_count_reduction"] = False
             assets = asset_files()
             if assets: apply(root, plan(root, assets))
             status.set("入力データと選択済みアイコンを保存しました"); editor_state.clear_dirty(); update_title()
-        except Exception as exc: messagebox.showerror("保存エラー", str(exc))
+            return True
+        except Exception as exc:
+            messagebox.showerror("保存エラー", str(exc))
+            return False
 
     def generate():
         try:
@@ -310,7 +325,7 @@ def launch_gui(root: Path) -> None:
         else:
             key = suggest_key("minecraft:bread", items); item = Item(key, True, "vanilla", "minecraft:bread", "", ["food"], [LootEntry("common", 1, 1, 0.5)], None)
         if try_write_form_to_item():
-            editor_state.add(item); load_item(item, flush=False); refresh()
+            editor_state.add(item); load_item(item); refresh()
 
     def new_custom():
         dialog = tk.Toplevel(window); dialog.title("Customテンプレート"); dialog.transient(window); dialog.grab_set(); choice = tk.StringVar(dialog, value="empty")
@@ -319,7 +334,7 @@ def launch_gui(root: Path) -> None:
     def duplicate_item():
         if editor_state.selected:
             if try_write_form_to_item():
-                item = copy.deepcopy(editor_state.selected); item.key = suggest_key(item.key, items); item.id = f"{item.id}_copy"; editor_state.add(item); load_item(item, flush=False); refresh()
+                item = copy.deepcopy(editor_state.selected); item.key = suggest_key(item.key, items); item.id = f"{item.id}_copy"; editor_state.add(item); load_item(item); refresh()
 
     def show_history():
         entries = history_entries(root)
@@ -327,7 +342,9 @@ def launch_gui(root: Path) -> None:
             selected_index = listbox.curselection()
             if not selected_index or not messagebox.askyesno("履歴復元", "現在のitems.jsonを保存してから復元しますか？"):
                 return
-            save(); restore_history(root, entries[selected_index[0]]["path"]); editor_state.replace_items(load_items(root), dirty=False); load_item(editor_state.selected, flush=False) if editor_state.selected else None; refresh(); status.set("履歴を復元して画面を更新しました"); dialog.destroy()
+            if not save():
+                return
+            restore_history(root, entries[selected_index[0]]["path"]); editor_state.replace_items(load_items(root), dirty=False); load_item(editor_state.selected) if editor_state.selected else None; refresh(); status.set("履歴を復元して画面を更新しました"); dialog.destroy()
         open_history_dialog(window, tk, ttk, entries, restore_selected)
     def delete_item():
         if not editor_state.selected or not messagebox.askyesno("削除確認", "items.jsonから削除しますか？"):
@@ -338,23 +355,35 @@ def launch_gui(root: Path) -> None:
         ui_guard["allow_count_reduction"] = True
         refresh()
         if editor_state.selected:
-            load_item(editor_state.selected, flush=False)
+            load_item(editor_state.selected)
 
-    tree.bind("<<TreeviewSelect>>", lambda _event: load_item(items[int(tree.selection()[0])], flush=True) if tree.selection() else None); search.trace_add("write", lambda *_: refresh()); filter_kind.trace_add("write", lambda *_: refresh()); filter_tag.trace_add("write", lambda *_: refresh()); filter_pool.trace_add("write", lambda *_: refresh()); filter_state.trace_add("write", lambda *_: refresh())
+    def handle_item_selection(_event=None):
+        selection = tree.selection()
+        if not selection:
+            return
+        target_index = int(selection[0])
+        result = change_selection(editor_state.selected_index, target_index, write_form_to_item)
+        if result.error is not None:
+            show_input_error(result.error)
+            tree.selection_set(str(editor_state.selected_index))
+            return
+        if result.changed:
+            load_item(items[target_index])
+    tree.bind("<<TreeviewSelect>>", handle_item_selection); search.trace_add("write", lambda *_: refresh()); filter_kind.trace_add("write", lambda *_: refresh()); filter_tag.trace_add("write", lambda *_: refresh()); filter_pool.trace_add("write", lambda *_: refresh()); filter_state.trace_add("write", lambda *_: refresh())
     footer = ttk.Frame(window); footer.grid(row=2, column=0, columnspan=2, sticky="ew", padx=10, pady=8); ttk.Button(footer, text="新規Custom", command=new_custom).pack(side="left", padx=3); ttk.Button(footer, text="新規Vanilla", command=lambda: new_item("vanilla")).pack(side="left", padx=3); ttk.Button(footer, text="複製", command=duplicate_item).pack(side="left", padx=3); ttk.Button(footer, text="削除", command=delete_item).pack(side="left", padx=3); ttk.Button(footer, text="履歴", command=show_history).pack(side="left", padx=3); ttk.Button(footer, text="元に戻す", command=undo).pack(side="left", padx=3); ttk.Button(footer, text="やり直す", command=redo).pack(side="left", padx=3); ttk.Button(footer, text="保存", command=save).pack(side="left", padx=3); ttk.Button(footer, text="生成プレビュー", command=preview).pack(side="left", padx=3); ttk.Button(footer, text="確認して生成", command=generate).pack(side="left", padx=3); ttk.Label(footer, textvariable=status).pack(side="left", padx=12)
     for variable in fields.values(): variable.trace_add("write", mark_dirty)
     kind.trace_add("write", mark_dirty); enabled.trace_add("write", mark_dirty); food_enabled.trace_add("write", mark_dirty); always_eat.trace_add("write", mark_dirty); ability_enabled.trace_add("write", mark_dirty); trigger.trace_add("write", mark_dirty); target_type.trace_add("write", mark_dirty)
     window.bind("<Control-s>", lambda _event: (save(), "break")[-1]); window.bind("<Control-z>", lambda _event: (undo(), "break")[-1]); window.bind("<Control-y>", lambda _event: (redo(), "break")[-1])
     refresh()
-    if items: tree.selection_set("0"); load_item(items[0], flush=False)
+    if items: tree.selection_set("0"); load_item(items[0])
     refresh_ability_preview()
     def on_close():
         if editor_state.dirty:
             decision = messagebox.askyesnocancel("未保存の変更", "未保存の変更を保存して終了しますか？")
             if decision is None:
                 return
-            if decision:
-                save()
+            if decision and not save():
+                return
         save_settings(root, {"window_geometry": window.geometry(), "last_key": editor_state.selected.key if editor_state.selected else "", "filters": {"kind": filter_kind.get(), "tag": filter_tag.get(), "pool": filter_pool.get(), "state": filter_state.get()}})
         window.destroy()
     window.protocol("WM_DELETE_WINDOW", on_close)

@@ -8,7 +8,7 @@ from tools.item_editor.importer import import_loot
 from tools.item_editor.models import Item, LootEntry, item_to_dict
 from tools.item_editor.validators import validate
 from tools.item_editor.writer import apply, plan
-from tools.item_editor.ui_logic import loot_matrix, suggest_key, template_item
+from tools.item_editor.ui_logic import change_selection, loot_matrix, suggest_key, template_item
 from tools.item_editor.store import load_settings, save_items, save_settings
 from tools.item_editor.state import EditorState
 from tools.item_editor.form_logic import apply_form_to_item, parse_float, parse_int
@@ -107,6 +107,31 @@ class ItemEditorTests(unittest.TestCase):
         self.assertEqual(parse_float("0", "半径", 3), 0)
         self.assertEqual(parse_int("0", "効果レベル", 1), 0)
         self.assertEqual(parse_float("", "半径", 3), 3)
+
+    def test_selection_same_index_does_not_write_back(self):
+        calls = []
+        result = change_selection(1, 1, lambda: calls.append("write"))
+        self.assertFalse(result.changed)
+        self.assertFalse(result.write_attempted)
+        self.assertEqual(calls, [])
+
+    def test_selection_write_failure_keeps_selection_and_retries_once_only(self):
+        calls = []
+        def fail_write():
+            calls.append("write")
+            raise ValueError("使用時間には数値を入力してください")
+        failed = change_selection(0, 1, fail_write)
+        repeated_event = change_selection(failed.selected_index, 0, fail_write)
+        self.assertFalse(failed.changed)
+        self.assertEqual(failed.selected_index, 0)
+        self.assertIsNotNone(failed.error)
+        self.assertFalse(repeated_event.write_attempted)
+        self.assertEqual(calls, ["write"])
+
+    def test_selection_write_success_changes_selection(self):
+        result = change_selection(0, 1, lambda: None)
+        self.assertTrue(result.changed)
+        self.assertEqual(result.selected_index, 1)
 
     def test_editor_logic_key_templates_and_matrix(self):
         existing = [Item("bread", True, "vanilla", "minecraft:bread", "パン")]

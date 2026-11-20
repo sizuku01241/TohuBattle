@@ -11,6 +11,26 @@ from pathlib import Path
 from .models import CustomSpec, Item, LootEntry
 
 
+@dataclass(frozen=True)
+class SelectionChangeResult:
+    """UI非依存の一覧選択切替結果。"""
+    selected_index: int | None
+    changed: bool
+    write_attempted: bool
+    error: ValueError | None = None
+
+
+def change_selection(current_index: int | None, target_index: int, write_back) -> SelectionChangeResult:
+    """同じ選択は無視し、異なる選択だけ書き戻し後に切り替える。"""
+    if current_index == target_index:
+        return SelectionChangeResult(current_index, False, False)
+    try:
+        write_back()
+    except ValueError as error:
+        return SelectionChangeResult(current_index, False, True, error)
+    return SelectionChangeResult(target_index, True, True)
+
+
 def suggest_key(item_id: str, existing: list[Item] | None = None) -> str:
     """アイテムIDからkeyを提案し、既存keyと衝突しない名前を返す。"""
     base = item_id.split(":", 1)[-1].lower()
