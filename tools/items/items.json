@@ -1,0 +1,194 @@
+{
+  "schema_version": 1,
+  "items": [
+    {
+      "key": "minecraft_bread",
+      "enabled": true,
+      "kind": "vanilla",
+      "id": "minecraft:bread",
+      "display_name": "",
+      "tags": [],
+      "loot": [
+        {
+          "pool": "common",
+          "rarity": 1,
+          "amount": 4,
+          "weight": 0.75
+        }
+      ],
+      "custom": null
+    },
+    {
+      "key": "minecraft_arrow",
+      "enabled": true,
+      "kind": "vanilla",
+      "id": "minecraft:arrow",
+      "display_name": "",
+      "tags": [],
+      "loot": [
+        {
+          "pool": "common",
+          "rarity": 1,
+          "amount": 8,
+          "weight": 0.55
+        },
+        {
+          "pool": "supply",
+          "rarity": 1,
+          "amount": 16,
+          "weight": 0.8
+        }
+      ],
+      "custom": null
+    },
+    {
+      "key": "minecraft_bow",
+      "enabled": true,
+      "kind": "vanilla",
+      "id": "minecraft:bow",
+      "display_name": "",
+      "tags": [],
+      "loot": [
+        {
+          "pool": "common",
+          "rarity": 1,
+          "amount": 1,
+          "weight": 0.15
+        }
+      ],
+      "custom": null
+    },
+    {
+      "key": "minecraft_stone_sword",
+      "enabled": true,
+      "kind": "vanilla",
+      "id": "minecraft:stone_sword",
+      "display_name": "",
+      "tags": [],
+      "loot": [
+        {
+          "pool": "common",
+          "rarity": 1,
+          "amount": 1,
+          "weight": 0.2
+        }
+      ],
+      "custom": null
+    },
+    {
+      "key": "minecraft_leather_chestplate",
+      "enabled": true,
+      "kind": "vanilla",
+      "id": "minecraft:leather_chestplate",
+      "display_name": "",
+      "tags": [],
+      "loot": [
+        {
+          "pool": "common",
+          "rarity": 1,
+          "amount": 1,
+          "weight": 0.18
+        }
+      ],
+      "custom": null
+    },
+    {
+      "key": "minecraft_water_bucket",
+      "enabled": true,
+      "kind": "vanilla",
+      "id": "minecraft:water_bucket",
+      "display_name": "",
+      "tags": [],
+      "loot": [
+        {
+          "pool": "common",
+          "rarity": 1,
+          "amount": 1,
+          "weight": 0.12
+        }
+      ],
+      "custom": null
+    },
+    {
+      "key": "minecraft_golden_apple",
+      "enabled": true,
+      "kind": "vanilla",
+      "id": "minecraft:golden_apple",
+      "display_name": "",
+      "tags": [],
+      "loot": [
+        {
+          "pool": "supply",
+          "rarity": 1,
+          "amount": 1,
+          "weight": 0.45
+        }
+      ],
+      "custom": null
+    },
+    {
+      "key": "minecraft_iron_sword",
+      "enabled": true,
+      "kind": "vanilla",
+      "id": "minecraft:iron_sword",
+      "display_name": "",
+      "tags": [],
+      "loot": [
+        {
+          "pool": "supply",
+          "rarity": 1,
+          "amount": 1,
+          "weight": 0.35
+        }
+      ],
+      "custom": null
+    },
+    {
+      "key": "minecraft_iron_chestplate",
+      "enabled": true,
+      "kind": "vanilla",
+      "id": "minecraft:iron_chestplate",
+      "display_name": "",
+      "tags": [],
+      "loot": [
+        {
+          "pool": "supply",
+          "rarity": 1,
+          "amount": 1,
+          "weight": 0.3
+        }
+      ],
+      "custom": null
+    },
+    {
+      "key": "tohu_power",
+      "enabled": true,
+      "kind": "custom",
+      "id": "tbr:tohu__power",
+      "display_name": "とーふの力",
+      "tags": [],
+      "loot": [
+        {
+          "pool": "common",
+          "rarity": 1,
+          "amount": 1,
+          "weight": 1.0
+        }
+      ],
+      "custom": {
+        "icon": "tools/items/icons/tohu_power.png",
+        "sound_file": "",
+        "max_stack_size": 64,
+        "use": {
+          "duration_sec": 1.6,
+          "movement_modifier": 0.35,
+          "animation": "eat"
+        },
+        "food": null,
+        "cooldown": null,
+        "on_consume": null,
+        "equipment": null
+      }
+    }
+  ]
+}
