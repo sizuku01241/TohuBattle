@@ -1,7 +1,9 @@
 """右クリック能力タブの選択肢。"""
+from .ability_preview import draw_ability_preview
 
 TARGET_VALUES = ("self", "cone", "circle", "line", "look")
 EFFECT_VALUES = ("heal", "potion_effect")
+SOUND_VALUES = ("random.levelup", "random.orb", "random.pop", "item.bow.shoot", "entity.player.levelup")
 
 
 def build_ability_tab(frame, tk, ttk, entry, fields, ability_enabled, trigger, target_type):
@@ -20,13 +22,24 @@ def build_ability_tab(frame, tk, ttk, entry, fields, ability_enabled, trigger, t
     entry(frame, 8, "効果時間(秒)", fields["effect_duration"])
     entry(frame, 9, "効果レベル", fields["effect_level"])
     entry(frame, 10, "回復量", fields["heal"])
-    ttk.Label(frame, text="対象判定はabilityContext経由。ダメージ/ノックバック/発火は未対応。", foreground="#996600").grid(row=11, column=0, columnspan=2, sticky="w", pady=10)
+    ttk.Label(frame, text="サウンドID（空欄なら音なし）").grid(row=11, column=0, sticky="w", padx=5, pady=4)
+    ttk.Combobox(frame, textvariable=fields["sound_id"], values=SOUND_VALUES, width=22).grid(row=11, column=1, sticky="ew", padx=5)
+    entry(frame, 12, "音量", fields["sound_volume"]); entry(frame, 13, "ピッチ", fields["sound_pitch"])
+    ttk.Label(frame, text="範囲").grid(row=14, column=0, sticky="w", padx=5)
+    ttk.Combobox(frame, textvariable=fields["sound_scope"], values=("source", "nearby"), state="readonly", width=22).grid(row=14, column=1, sticky="ew", padx=5)
+    ttk.Label(frame, text="/playsound <id> @s ~ ~ ~ <volume> <pitch>（候補は要実機確認）", foreground="#996600").grid(row=15, column=0, columnspan=2, sticky="w", padx=5)
+    ttk.Label(frame, text="対象判定はabilityContext経由。ダメージ/ノックバック/発火は未対応。", foreground="#996600").grid(row=16, column=0, columnspan=2, sticky="w", pady=10)
     canvas = tk.Canvas(frame, width=360, height=220, background="#20242b", highlightthickness=0)
-    canvas.grid(row=0, column=2, rowspan=12, padx=18, pady=8, sticky="nsew")
+    canvas.grid(row=0, column=2, rowspan=17, padx=18, pady=8, sticky="nsew")
+    canvas._dummy_point = (1, 0)
+    def move_dummy(event):
+        canvas._dummy_point = (round((event.x - 180) / 20), round((180 - event.y) / 20))
+        draw_ability_preview(canvas, target_type.get(), fields["radius"].get(), fields["width"].get(), fields["angle"].get())
+    canvas.bind("<Button-1>", move_dummy)
     return canvas
 
 
-def draw_ability_preview(canvas, target_type, radius_value, width_value):
+def _legacy_draw_ability_preview(canvas, target_type, radius_value, width_value):
     """能力範囲の簡易プレビューを描画する。"""
     canvas.delete("all")
     center_x, center_y = 180, 110

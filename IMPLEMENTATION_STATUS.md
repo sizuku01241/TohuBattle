@@ -46,6 +46,11 @@
 | ログ保存失敗時の再試行保持 | 実装済み・自動テスト済み | `LogManager` |
 | 地形スキャン高速化・範囲変更時キャッシュ無効化 | 実装済み・自動テスト済み | `MapScanner` |
 | マップ別の通常物資・地面物資・サプライ配置数 | 実装済み | 選択中マップの `chestCount` / `groundItemCount` / `supplyCount` を配置処理が参照 |
+| 使用時の音 | 実装済み・実機確認待ち | `abilityContext.playSound(source, id, options)` 接続が必要。バニラIDのみ |
+| 右クリック範囲プレビュー | 実装済み・実機確認待ち | 自動縮尺、グリッド、形状別判定、緑/赤のサンプル表示。Bedrock実機判定は未確認 |
+| ルートプレビュー | 実装済み・概算・実機確認待ち | `generateLoot` の slots/unique/weight を再現。JSのrandom comparatorはPythonで完全再現不可。groundは生成対象外 |
+| 右クリック範囲プレビュー | 実装済み・実機確認待ち | 自動縮尺、グリッド、形状別判定、緑/赤のサンプル表示。Bedrock実機判定は未確認 |
+| ルートプレビュー | 実装済み・概算・実機確認待ち | `generateLoot` の slots/unique/weight を再現。JSのrandom comparatorはPythonで完全再現不可。groundは生成対象外 |
 | オリジナルアイテムGUIエディタ | 実装済み・実機確認待ち | `tools/item_editor` にVanilla/Custom選択、テンプレート、複数loot、pool×レア度マトリクス、PNGプレビュー、検証件数の常時表示と該当アイテムへの移動、履歴一覧/復元、生成プレビューを実装。EditorStateによる状態管理の一本化、Undo/Redo（Ctrl+Z/Ctrl+Y）、Vanilla ID検索候補、未保存フラグ、フィルタを実装。Bedrockの未確認項目はGUIで未対応表示 |
 
 ### 2026-11-20 アイテムエディタ改善

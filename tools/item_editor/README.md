@@ -19,6 +19,10 @@ GUIでは `Vanilla / Custom`、pool、レア度、使用アニメーションを
 
 右クリック能力は `on_use` として管理し、生成物は `abilityData.js`、`abilityRunner.js`、`abilityGeometry.js`、`abilityContext.js`、`tbrAbility.js` です。生成後に表示される `main.js` へのimportと `setAbilityContext` 接続例は手動で追加します。ツールは既存の `main.js` を変更しません。
 
+使用時の音は `on_use.sound`（id / volume / pitch / scope）で管理します。生成ランナーは実際に発動条件を通過した後、`abilityContext.playSound(source, id, options)` を呼びます。接続例は `setAbilityContext({ playSound(source, id, options) { source.playSound?.(id); } })` です。音量・ピッチ・nearby の厳密なBedrock挙動は実機確認待ちです。音声ファイルは未対応です。
+
+右クリック範囲プレビューは自動縮尺のグリッド上にプレイヤー、向き、判定内（緑）/外（赤）のサンプル対象を表示します。ルートプレビューは common/supply の3スロット上限で表示し、地面プールは現在のゲーム生成対象外として表示しません。`ItemManager.generateLoot` のJSランダム比較ソートはPythonで完全再現できないため、試行結果は概算です。
+
 実機確認が必要な項目は、ItemCustomComponentの `onUse` イベント形、`tbr:ability` の登録タイミング、`event.itemStack` の取得、`minecraft:use_modifiers` のhold挙動、potion effectの引数単位、Bedrockのサウンド定義形式です。確認前の推測実装は行いません。
 
 生成前に必ず検証とプレビューを行い、書き込み時は `tools/items/history/` に変更前ファイルを退避します。`main.js`、`ItemManager.js`、manifest、UUIDは変更しません。

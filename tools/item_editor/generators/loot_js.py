@@ -46,14 +46,28 @@ def generate_loot_files(items: list[Item], source_texts: dict[str, str] | None =
     return files
 
 
-def simulate_item_probability(items: list[Item], target_id: str, pool: str = "common", slots: int = 27, trials: int = 10000, seed: int = 1) -> float:
-    rng = random.Random(seed); unique = {}
+def simulate_loot(items: list[Item], pool="common", rarity=1, slots=3, trials=1000, seed=1):
+    """Reproduce generateLoot's filtering, random comparator sort and unique/slot cap.
+
+    Python cannot reproduce JS's engine sort comparator exactly, so this is explicitly
+    an approximation using a deterministic random-key ordering.
+    """
+    rng = random.Random(seed); candidates = []
     for item in items:
-        if item.enabled and any(entry.pool == pool for entry in item.loot): unique.setdefault(item.id, item)
-    candidates = list(unique.values())
-    hits = 0
+        if not item.enabled: continue
+        entry = next((e for e in item.loot if e.pool == pool and e.rarity == rarity), None)
+        if entry: candidates.append((item, entry))
+    counts = {item.id: 0 for item, _ in candidates}; total_items = 0
     for _ in range(trials):
-        selected = [item for item in candidates if rng.random() < next(entry.weight for entry in item.loot if entry.pool == pool)]
-        rng.shuffle(selected)
-        if any(item.id == target_id for item in selected[:slots]): hits += 1
-    return hits / trials if trials else 0.0
+        filtered = [(item, entry) for item, entry in candidates if entry.weight > 0 and rng.random() < entry.weight]
+        filtered.sort(key=lambda pair: rng.random())
+        selected = []
+        for item, entry in filtered:
+            if len(selected) >= slots or item.id in {x.id for x in selected}: continue
+            selected.append(item); counts[item.id] += 1
+        total_items += len(selected)
+    return {"rows": [{"id": item.id, "name": item.display_name or item.id, "weight": entry.weight, "probability": counts[item.id] / trials if trials else 0, "expected": counts[item.id] * 1.0 / trials if trials else 0} for item, entry in candidates], "average_items": total_items / trials if trials else 0, "approximate": True}
+
+
+def simulate_item_probability(items: list[Item], target_id: str, pool: str = "common", slots: int = 3, trials: int = 10000, seed: int = 1, rarity: int = 1) -> float:
+    return next((row["probability"] for row in simulate_loot(items, pool, rarity, slots, trials, seed)["rows"] if row["id"] == target_id), 0.0)

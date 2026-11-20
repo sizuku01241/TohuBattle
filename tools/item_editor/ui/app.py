@@ -1,7 +1,7 @@
 import copy
 from pathlib import Path
 
-from ..generators.loot_js import simulate_item_probability
+from ..generators.loot_js import simulate_item_probability, simulate_loot
 from ..models import CustomSpec, Item, LootEntry
 from ..form_logic import apply_form_to_item, parse_float, parse_int
 from ..store import load_items, load_settings, save_items, save_settings
@@ -16,6 +16,7 @@ from .tab_ability import build_ability_tab, draw_ability_preview
 from .tab_basic import build_basic_tab
 from .tab_loot import build_loot_tab
 from .tab_use import build_use_tab
+from .tab_route import build_route_tab
 
 
 def launch_gui(root: Path) -> None:
@@ -31,7 +32,7 @@ def launch_gui(root: Path) -> None:
     saved_filters = settings.get("filters", {})
     filter_kind.set(saved_filters.get("kind", "すべて")); filter_tag.set(saved_filters.get("tag", "すべて")); filter_pool.set(saved_filters.get("pool", "すべて")); filter_state.set(saved_filters.get("state", "すべて"))
     window.columnconfigure(1, weight=1); window.rowconfigure(1, weight=1)
-    fields = {key: tk.StringVar() for key in ("key", "id", "name", "pool", "rarity", "amount", "weight", "nutrition", "saturation", "duration", "movement", "animation", "target", "radius", "angle", "width", "effect_id", "effect_duration", "effect_level", "heal")}
+    fields = {key: tk.StringVar() for key in ("key", "id", "name", "pool", "rarity", "amount", "weight", "nutrition", "saturation", "duration", "movement", "animation", "target", "radius", "angle", "width", "effect_id", "effect_duration", "effect_level", "heal", "sound_id", "sound_volume", "sound_pitch", "sound_scope")}
     kind = tk.StringVar(); enabled = tk.BooleanVar(); food_enabled = tk.BooleanVar(); always_eat = tk.BooleanVar(); ability_enabled = tk.BooleanVar(); trigger = tk.StringVar(value="tap"); target_type = tk.StringVar(value="self"); tag_vars = {tag: tk.BooleanVar() for tag in TAGS}; icon_label = tk.StringVar(value="未対応"); preview_text = None
     loot_rows = []; loot_selected = {"index": None}
 
@@ -43,8 +44,8 @@ def launch_gui(root: Path) -> None:
     tree = build_item_tree(window, ttk)
     editor = ttk.Frame(window); editor.grid(row=1, column=1, sticky="nsew", padx=(5, 10), pady=5); editor.rowconfigure(0, weight=1); editor.columnconfigure(0, weight=1)
     notebook = ttk.Notebook(editor); notebook.grid(row=0, column=0, sticky="nsew")
-    basic = ttk.Frame(notebook, padding=12); loot = ttk.Frame(notebook, padding=12); food = ttk.Frame(notebook, padding=12); ability = ttk.Frame(notebook, padding=12); equip = ttk.Frame(notebook, padding=12); preview = ttk.Frame(notebook, padding=8)
-    for frame, title in ((basic, "基本"), (loot, "出現設定"), (food, "食べ物/使用"), (ability, "右クリック"), (equip, "装備(未対応)"), (preview, "プレビュー")): notebook.add(frame, text=title)
+    basic = ttk.Frame(notebook, padding=12); loot = ttk.Frame(notebook, padding=12); food = ttk.Frame(notebook, padding=12); ability = ttk.Frame(notebook, padding=12); route = ttk.Frame(notebook, padding=12); equip = ttk.Frame(notebook, padding=12); preview = ttk.Frame(notebook, padding=8)
+    for frame, title in ((basic, "基本"), (loot, "出現設定"), (food, "食べ物/使用"), (ability, "右クリック"), (route, "ルートプレビュー"), (equip, "装備(未対応)"), (preview, "プレビュー")): notebook.add(frame, text=title)
     for frame in (basic, loot, food, ability, equip): frame.columnconfigure(1, weight=1)
 
     basic_widgets = build_basic_tab(basic, ttk, entry, fields, kind, enabled, tag_vars, TAGS, STACK_LIMITS, icon_label, lambda: choose_icon())
@@ -54,11 +55,12 @@ def launch_gui(root: Path) -> None:
     loot_table, matrix = build_loot_tab(loot, ttk, entry, fields, lambda: add_loot_row(), lambda: remove_loot_row())
 
     build_use_tab(food, ttk, entry, fields, food_enabled, always_eat)
+    build_route_tab(route, tk, ttk, items, simulate_loot)
 
     ability_canvas = build_ability_tab(ability, tk, ttk, entry, fields, ability_enabled, trigger, target_type)
 
     def refresh_ability_preview(*_args):
-        draw_ability_preview(ability_canvas, target_type.get(), fields["radius"].get(), fields["width"].get())
+        draw_ability_preview(ability_canvas, target_type.get(), fields["radius"].get(), fields["width"].get(), fields["angle"].get())
     for variable in (target_type, fields["radius"], fields["angle"], fields["width"]): variable.trace_add("write", refresh_ability_preview)
 
     ttk.Label(equip, text="装備タブは設計書により未対応です", foreground="#996600").grid(row=0, column=0, columnspan=2, sticky="w"); ttk.Label(equip, text="Minecraftの装備コンポーネント確認後に有効化します。", foreground="#666").grid(row=1, column=0, columnspan=2, sticky="w")
@@ -181,7 +183,7 @@ def launch_gui(root: Path) -> None:
         if not item or item not in items: return
         commit_selected_loot()
         before = editor_state.snapshot()
-        values = {"key": fields["key"].get(), "id": fields["id"].get(), "name": fields["name"].get(), "kind": kind.get(), "enabled": enabled.get(), "food_enabled": food_enabled.get(), "nutrition": fields["nutrition"].get(), "saturation": fields["saturation"].get(), "duration": fields["duration"].get(), "movement": fields["movement"].get(), "animation": fields["animation"].get(), "always_eat": always_eat.get(), "ability_enabled": ability_enabled.get(), "trigger": trigger.get(), "target_type": target_type.get(), "radius": fields["radius"].get(), "angle": fields["angle"].get(), "width": fields["width"].get(), "effect_kind": fields["target"].get(), "effect_id": fields["effect_id"].get(), "effect_duration": fields["effect_duration"].get(), "effect_level": fields["effect_level"].get(), "heal": fields["heal"].get()}
+        values = {"key": fields["key"].get(), "id": fields["id"].get(), "name": fields["name"].get(), "kind": kind.get(), "enabled": enabled.get(), "food_enabled": food_enabled.get(), "nutrition": fields["nutrition"].get(), "saturation": fields["saturation"].get(), "duration": fields["duration"].get(), "movement": fields["movement"].get(), "animation": fields["animation"].get(), "always_eat": always_eat.get(), "ability_enabled": ability_enabled.get(), "trigger": trigger.get(), "target_type": target_type.get(), "radius": fields["radius"].get(), "angle": fields["angle"].get(), "width": fields["width"].get(), "effect_kind": fields["target"].get(), "effect_id": fields["effect_id"].get(), "effect_duration": fields["effect_duration"].get(), "effect_level": fields["effect_level"].get(), "heal": fields["heal"].get(), "sound_id": fields["sound_id"].get(), "sound_volume": fields["sound_volume"].get(), "sound_pitch": fields["sound_pitch"].get(), "sound_scope": fields["sound_scope"].get()}
         icon = f"tools/items/icons/{values['key']}.png" if asset_sources.get(id(item)) else None
         changed = apply_form_to_item(item, values, loot_rows, [tag for tag, var in tag_vars.items() if var.get()], icon)
         items[editor_state.selected_index] = changed
@@ -217,7 +219,8 @@ def launch_gui(root: Path) -> None:
         loot_rows.clear(); loot_rows.extend(copy.deepcopy(item.loot)); refresh_loot_table()
         entry = loot_rows[0] if loot_rows else LootEntry("common", 1, 1, 0.5); load_loot_row(entry)
         custom = item.custom or CustomSpec(); icon_label.set(Path(custom.icon).name if custom.icon else "未選択"); icon_source = asset_sources.get(id(item)); update_icon_preview(icon_source) if icon_source else icon_preview.configure(image="", text="プレビューなし"); food_enabled.set(bool(custom.food)); fields["nutrition"].set(str((custom.food or {}).get("nutrition", ""))); fields["saturation"].set(str((custom.food or {}).get("saturation_modifier", ""))); fields["duration"].set(str((custom.use or {}).get("duration_sec", "1.6"))); fields["movement"].set(str((custom.use or {}).get("movement_modifier", "0.35"))); fields["animation"].set((custom.use or {}).get("animation", "eat")); ability_enabled.set(bool(custom.on_use));
-        if custom.on_use: target = custom.on_use.get("target", {}); target_type.set(target.get("type", "self")); fields["radius"].set(str(target.get("radius", ""))); fields["angle"].set(str(target.get("angle", ""))); fields["width"].set(str(target.get("width", ""))); effect = (custom.on_use.get("effects") or [{}])[0]; fields["target"].set(effect.get("kind", "heal")); fields["effect_id"].set(effect.get("id", "")); fields["effect_duration"].set(str(effect.get("duration_sec", ""))); fields["effect_level"].set(str(effect.get("level", ""))); fields["heal"].set(str(effect.get("amount", "")))
+        for key, default in (("sound_id", ""), ("sound_volume", "1"), ("sound_pitch", "1"), ("sound_scope", "source")): fields[key].set(default)
+        if custom.on_use: target = custom.on_use.get("target", {}); target_type.set(target.get("type", "self")); fields["radius"].set(str(target.get("radius", ""))); fields["angle"].set(str(target.get("angle", ""))); fields["width"].set(str(target.get("width", ""))); effect = (custom.on_use.get("effects") or [{}])[0]; fields["target"].set(effect.get("kind", "heal")); fields["effect_id"].set(effect.get("id", "")); fields["effect_duration"].set(str(effect.get("duration_sec", ""))); fields["effect_level"].set(str(effect.get("level", ""))); fields["heal"].set(str(effect.get("amount", ""))); sound = custom.on_use.get("sound") or {}; fields["sound_id"].set(sound.get("id", "")); fields["sound_volume"].set(str(sound.get("volume", 1))); fields["sound_pitch"].set(str(sound.get("pitch", 1))); fields["sound_scope"].set(sound.get("scope", "source"))
         ui_guard["restoring"] = previous_restoring
 
     def load_loot_row(row):

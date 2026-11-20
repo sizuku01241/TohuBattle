@@ -58,6 +58,9 @@ def apply_form_to_item(
     custom.food = {"nutrition": parse_int(values.get("nutrition"), "空腹回復", 0), "saturation_modifier": parse_float(values.get("saturation"), "満腹度", 0), "can_always_eat": bool(values.get("always_eat", False))} if food_enabled else None
     if bool(values.get("ability_enabled", False)):
         custom.on_use = {"trigger": str(values.get("trigger", "tap")), "target": {"type": str(values.get("target_type", "self")), "radius": parse_float(values.get("radius"), "半径", 0), "angle": parse_float(values.get("angle"), "角度", 90), "width": parse_float(values.get("width"), "幅", 1)}, "effects": [{"kind": str(values.get("effect_kind", "heal") or "heal"), "id": str(values.get("effect_id", "")), "duration_sec": parse_float(values.get("effect_duration"), "効果時間", 1), "level": parse_int(values.get("effect_level"), "効果レベル", 1), "amount": parse_float(values.get("heal"), "回復量", 0)}]}
+        sound_id = str(values.get("sound_id", "")).strip()
+        if sound_id:
+            custom.on_use["sound"] = {"id": sound_id, "volume": parse_float(values.get("sound_volume"), "音量", 1), "pitch": parse_float(values.get("sound_pitch"), "ピッチ", 1), "scope": str(values.get("sound_scope", "source"))}
     else:
         custom.on_use = None
     result.custom = custom

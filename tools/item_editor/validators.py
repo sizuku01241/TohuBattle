@@ -5,6 +5,7 @@ from .models import Item
 
 KEY = re.compile(r"^[a-z0-9_]+$")
 IDENTIFIER = re.compile(r"^[a-z0-9_]+:[a-z0-9_]+$")
+SOUND_IDENTIFIER = re.compile(r"^[a-z0-9_.:]+$")
 TAGS = {"food", "weapon", "armor", "healing", "potion", "utility", "material", "special"}
 POOLS = {"common", "supply", "ground"}
 STACK_LIMITS = {
@@ -73,6 +74,14 @@ def validate(items: list[Item]) -> list[tuple[str, str, str]]:
                 if not valid: errors.append((item.key, "error", "アイコンがPNGではありません"))
                 elif width > 64 or height > 64: errors.append((item.key, "warning", "アイコンは16〜64px推奨です"))
             if item.custom.on_use:
+                sound = item.custom.on_use.get("sound")
+                if sound:
+                    if not SOUND_IDENTIFIER.fullmatch(str(sound.get("id", ""))): errors.append((item.key, "error", "サウンドIDはnamespace.name形式で入力してください"))
+                    try:
+                        if not 0 < float(sound.get("volume", 1)) <= 10: errors.append((item.key, "error", "音量は0より大きく10以下にしてください"))
+                        if not 0.1 <= float(sound.get("pitch", 1)) <= 2: errors.append((item.key, "error", "ピッチは0.1〜2の範囲にしてください"))
+                    except (TypeError, ValueError): errors.append((item.key, "error", "音量とピッチは数値で入力してください"))
+                    if sound.get("scope") not in {"source", "nearby"}: errors.append((item.key, "error", "音の範囲が不正です"))
                 for effect in item.custom.on_use.get("effects", []):
                     if effect.get("kind") not in {"potion_effect", "heal"}: errors.append((item.key, "error", "右クリック効果kindはpotion_effect/healのみです"))
                     if float(effect.get("duration_sec", 0)) <= 0 or int(effect.get("level", 0)) <= 0: errors.append((item.key, "error", "効果時間とレベルは1以上が必要です"))
